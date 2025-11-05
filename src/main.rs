@@ -1,9 +1,12 @@
 use axum::{http::StatusCode, response::IntoResponse};
 use axum::{routing::get, Router};
+use dashmap::DashMap;
 use tokio::net::TcpListener;
 use tracing::Level;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::FmtSubscriber;
 use tower_http::trace::TraceLayer;
+use std::env;
 use std::sync::Arc;
 
 mod handlers;
@@ -15,6 +18,7 @@ mod error;
 #[derive(Clone)]
 pub struct AppState {
     pool: sqlx::SqlitePool,
+    cache: Arc<DashMap<String, String>>
 }
 
 async fn health_check() -> impl IntoResponse {
@@ -28,16 +32,20 @@ async fn main() {
     // Load .env file at the start of your application
     dotenvy::dotenv().ok();
 
+    let isDev = match env::var("ENV") {
+        Ok(val) => val == "development",
+        Err(_) => true,
+    };
+
     // Initialize tracing
     let subscriber = FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(Level::TRACE)
+        .with_max_level(if isDev{ LevelFilter::TRACE } else { LevelFilter::OFF})
         // completes the builder.
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-
 
     // Database connection
     let pool = db_connection::get_sqlite_connection();
@@ -50,8 +58,10 @@ async fn main() {
 
     tracing::info!("Database migrations completed successfully");
 
+    let cache = Arc::new(DashMap::new());
+
       // Shared application state
-    let state = Arc::new(AppState { pool });
+    let state = Arc::new(AppState { pool, cache });
 
     // Build router
     let app = Router::new()

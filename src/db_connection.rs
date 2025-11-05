@@ -3,6 +3,9 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
+use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
+
 
 fn get_sqlite_db_url() -> Option<String> {
     let database_url= &env::var("SQLITE_DB").expect("Failed to load SQLITE_DB env variable");
@@ -26,6 +29,19 @@ pub fn get_sqlite_connection() -> sqlx::SqlitePool {
     let database_url = &get_sqlite_db_url().unwrap();
   
     let pool = match sqlx::SqlitePool::connect_lazy(database_url) {
+        Ok(pool) => pool,
+        Err(err) => panic!("{err}"),
+    };
+
+    pool
+}
+
+pub fn get_pg_connection() -> PgPool {
+    let database_url = &env::var("PG_DB").unwrap();
+
+    let pool = match PgPoolOptions::new()
+    .max_connections(5)
+    .connect_lazy(database_url) {
         Ok(pool) => pool,
         Err(err) => panic!("{err}"),
     };

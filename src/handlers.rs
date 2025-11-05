@@ -1,28 +1,33 @@
 use axum::{
-    Json, extract::{Path, State}, http::{Error, StatusCode}, response::{IntoResponse, Response}
+    Json, extract::{Path, State}, http::{StatusCode}, response::{IntoResponse, Response}
 };
-use crate::{AppState, Arc, error::Result, models::{KVValue, SetValueRequest}};
+use crate::{AppState, Arc, models::{KVValue, SetValueRequest}};
 
 
 pub async fn get_key(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
 ) -> Response {
-    let result: std::result::Result<Option<KVValue>, sqlx::Error> = sqlx::query_as::<_, KVValue>("SELECT value FROM kv_store WHERE key = ?")
-        .bind(&key)
-        .fetch_optional(&state.pool)
-        .await;
 
-    if let Err(err) = result {
-        return (StatusCode::INTERNAL_SERVER_ERROR).into_response();
+    if let Some(value) = state.cache.get(&key) {
+        // tracing::debug!("Cache HIT for key: {}", key);
+        return (StatusCode::OK, value.value().clone()).into_response();
     }
 
-    let val = result.unwrap();
+    // tracing::debug!("Cache MISS for key: {}", key);
 
-    return match val {
-        Some(val) => (StatusCode::OK, val.value).into_response(),
-        None => (StatusCode::NOT_FOUND).into_response(),
-    } 
+    let result = sqlx::query_as::<_, KVValue>("SELECT value FROM kv_store WHERE key = $1")
+        .bind(&key)
+        .fetch_optional(&state.pool)
+        .await.unwrap();
+
+
+    if let Some(kv) = result {
+        state.cache.insert(key, kv.value.clone());
+        return (StatusCode::OK, kv.value).into_response()
+    }
+
+    return (StatusCode::NOT_FOUND).into_response();
 }
 
 
@@ -32,11 +37,14 @@ pub async fn set_key(
     Json(payload): Json<SetValueRequest>,
 ) -> Response {
     
-    sqlx::query("INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    sqlx::query("INSERT INTO kv_store (key, value) VALUES ($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .bind(&key)
         .bind(&payload.value)
         .execute(&state.pool)
         .await.unwrap();
+
+
+    state.cache.remove(&key);
 
     return (StatusCode::OK).into_response();
 }
@@ -46,7 +54,7 @@ pub async fn delete_key(
     Path(key): Path<String>
 ) -> Response {
     
-    let result = sqlx::query("DELETE FROM kv_store where key = ?")
+    let result = sqlx::query("DELETE FROM kv_store where key = $1")
         .bind(&key)
         .execute(&state.pool)
         .await.unwrap();
@@ -55,5 +63,7 @@ pub async fn delete_key(
         return (StatusCode::NOT_FOUND).into_response();
     }
 
-    (StatusCode::OK).into_response()
+    state.cache.remove(&key);
+
+    return (StatusCode::OK).into_response();
 }
