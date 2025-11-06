@@ -1,1 +1,4 @@
 /target
+db/kv_store.db
+wal.log
+wal*.log.archive
