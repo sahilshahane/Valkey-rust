@@ -1,3 +1,11 @@
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+
 use axum::{http::StatusCode, response::IntoResponse};
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
@@ -38,6 +46,7 @@ async fn health_check() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+
     // Load .env file at the start of your application
     dotenvy::dotenv().ok();
 
@@ -45,7 +54,7 @@ async fn main() {
         Ok(val) => val == "development",
         Err(_) => true,
     };
-
+    
     // Initialize tracing
     let subscriber = FmtSubscriber::builder()
         // Only show INFO and ERROR messages (skips DEBUG and TRACE)
@@ -54,6 +63,13 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+
+     #[cfg(not(target_env = "msvc"))]
+    tracing::info!("✅ Using jemalloc allocator for better performance");
+    
+    #[cfg(target_env = "msvc")]
+    tracing::warn!("⚠️  Using system allocator (jemalloc not available on MSVC)");
 
     // Database connection
     let pool = db_connection::get_sqlite_connection();
