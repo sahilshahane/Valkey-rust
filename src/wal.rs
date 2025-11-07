@@ -1,6 +1,6 @@
 use std::{ sync::Arc, time::Duration };
 
-use tokio::{fs::{self, OpenOptions}, io::{self, AsyncReadExt, AsyncWriteExt}, sync::Mutex, time::interval};
+use tokio::{fs::{self, OpenOptions}, io::{self, AsyncReadExt, AsyncWriteExt}, sync::{Mutex, RwLock}, time::interval};
 
 use crate::DBPool;
 
@@ -8,7 +8,7 @@ use crate::DBPool;
 type File = tokio::fs::File;
 
 pub struct WAL {
-    file_path: String,
+    file_path: Mutex<String>,
     file: Mutex<tokio::fs::File>,
     db: Arc<DBPool>
 }
@@ -91,18 +91,34 @@ impl WAL {
         // HOLD THE LOCK for the entire operation
         let mut file_guard = self.file.lock().await; 
 
+        let mut file_path = self.file_path.lock().await;
+
         // Check if WAL file is empty
-        let metadata = fs::metadata(&self.file_path).await?;
+        let metadata = fs::metadata(&(*file_path)).await?;
         if metadata.len() == 0 {
             tracing::info!("WAL file is empty, skipping sync");
             return Ok(());
         }
 
+        let archive_name = format!("{}.archive", &(*file_path));
+        fs::rename(&(*file_path), &archive_name).await?;
+        
+        tracing::info!("WAL archived to: {}", archive_name);
+
+        let new_file_path = WAL::get_new_file_name();
+
+        // Create new file and replace the handle in the mutex
+        let new_file = WAL::get_file(&new_file_path).await;
+        let mut read_file = std::mem::replace(&mut *file_guard, new_file);
+
+        *file_path = new_file_path;
+
+        drop(file_path);
+        drop(file_guard);
+
+
+
         // Open a separate read handle
-        let mut read_file = OpenOptions::new()
-            .read(true)
-            .open(&self.file_path)
-            .await?;
 
         const CHUNK_SIZE: usize = 1024 * 8;
         let mut buffer = vec![0u8; CHUNK_SIZE];
@@ -243,22 +259,13 @@ impl WAL {
         // Close read file
         drop(read_file);
 
-        // Archive old file (still holding the lock!)
-        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let archive_name = format!("wal_{}.log.archive", timestamp);
-        fs::rename("wal.log", &archive_name).await?;
-        
-        tracing::info!("WAL archived to: {}", archive_name);
-
-        // Create new file and replace the handle in the mutex
-        let new_file = WAL::get_file(&self.file_path).await;
-        
-        // Replace file handle BEFORE releasing lock
-        *file_guard = new_file;
-
         Ok(())
     }
 
+    fn get_new_file_name() -> String {
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        format!("wal_{timestamp}.log")
+    }
 
 
     async fn get_file(file_path: &str) -> File {
@@ -271,11 +278,11 @@ impl WAL {
     }
 
     pub async fn new(db: Arc<DBPool>) -> Self {
-        let file_path = "wal.log";
-        let file = Mutex::new( WAL::get_file("wal.log").await );
+        let file_path = WAL::get_new_file_name();
+        let file = Mutex::new( WAL::get_file(&file_path).await );
 
         WAL { 
-            file_path: file_path.to_string(), 
+            file_path: Mutex::from(file_path.to_string()), 
             file, 
             db 
         }
@@ -287,9 +294,11 @@ impl WAL {
             
             loop {
                 interval.tick().await;
-                
+
+                let file_path = self.file_path.lock().await.clone();
+                    
                 // Check WAL file size
-                match fs::metadata(&self.file_path).await {
+                match fs::metadata(&file_path).await {
                     Ok(metadata) => {
                         let file_size = metadata.len();
                         const THRESHOLD_BYTES: u64 = 1024 * 1024 * 50;
