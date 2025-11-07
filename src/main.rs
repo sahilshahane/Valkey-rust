@@ -10,13 +10,13 @@ use axum::{http::StatusCode, response::IntoResponse};
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tower_http::trace::TraceLayer;
 use std::env;
 use std::sync::Arc;
 use whirlwind::ShardMap;
 
-
+use crate::config::{Config, get_default_config};
 use crate::db_connection::load_kvstore_inmemory;
 use crate::wal::WAL;
 
@@ -26,16 +26,18 @@ mod models;
 mod error;
 mod wal;
 mod constants;
+mod config;
 
 
-pub type DBPool = sqlx::SqlitePool;
+pub type DBPool = sqlx::PgPool;
 pub type HashMap = ShardMap<String, String>;
 
 #[derive(Clone)]
 pub struct AppState{
     pool: Arc<DBPool>,
     cache: Arc<HashMap>,
-    wal: Arc<WAL>
+    wal: Arc<WAL>,
+    config: Config
 }
 
 async fn health_check() -> impl IntoResponse {
@@ -43,12 +45,12 @@ async fn health_check() -> impl IntoResponse {
 }
 
 
-
 #[tokio::main]
 async fn main() {
-
     // Load .env file at the start of your application
     dotenvy::dotenv().ok();
+
+    let config = get_default_config();
 
     let is_dev = match env::var("ENV") {
         Ok(val) => val == "development",
@@ -59,6 +61,7 @@ async fn main() {
     let subscriber = FmtSubscriber::builder()
         // Only show INFO and ERROR messages (skips DEBUG and TRACE)
         .with_max_level(if is_dev{ LevelFilter::INFO } else { LevelFilter::ERROR })
+        .with_env_filter(EnvFilter::new("info,sqlx::query=error"))
         // completes the builder.
         .finish();
 
@@ -72,7 +75,7 @@ async fn main() {
     tracing::warn!("⚠️  Using system allocator (jemalloc not available on MSVC)");
 
     // Database connection
-    let pool = db_connection::get_sqlite_connection();
+    let pool = db_connection::get_pg_connection();
     
     // Run migrations
     if let Err(err) = sqlx::migrate!("./migrations").run(&pool).await {
@@ -85,14 +88,31 @@ async fn main() {
     let pool = Arc::new(pool);
     let cache = Arc::new(HashMap::new());
 
-    let wal = Arc::new(WAL::new(pool.clone()).await);
+    // tracing::error!("Failed to create directory for write-ahead-logs, path={logs_dir}\n{err}");
+
+    // Initialize WAL and handle potential initialization error so `wal` is Arc<WAL>
+    let mut wal = match WAL::new(pool.clone(), &config.logs_dir).await {
+        Ok(w) => w,
+        Err(error) => {
+            tracing::error!("Failed to initialize write-ahead-log {error}");
+            return;
+        }
+    };
+
+
+    if let Err(err) = wal.recover().await {
+        tracing::error!("Failed to recover from WAL logs. {err}");
+        return;
+    }
+
+    wal.initialize_pool(config.wal_pool_size).await;
       
     tracing::info!("syncing write-ahead-log");
 
-    if let Err(error) = wal.sync().await {
-        tracing::error!("Failed to sync write-ahead-log & database\n{error}");
-        return;
-    }
+    // if let Err(error) = wal.sync().await {
+    //     tracing::error!("Failed to sync write-ahead-log & database\n{error}");
+    //     return;
+    // }
     
     tracing::info!("syncing of write-ahead-log with database completed");
 
@@ -102,12 +122,10 @@ async fn main() {
     };
 
     // Start background sync task
-    wal.clone().start_background_sync();
+    // wal.clone().start_background_sync();
     tracing::info!("Started background WAL sync task");
 
-
-  
-    let state = Arc::new(AppState { pool, cache, wal });
+    let state = Arc::new(AppState { pool, cache, wal: Arc::new(wal), config: config.clone() });
 
     // Build router
     let app = Router::new()
@@ -120,7 +138,7 @@ async fn main() {
         .with_state(state);
 
      // Start server
-    let addr = "0.0.0.0:4000";
+    let addr = &format!("0.0.0.0:{}", config.port);
     let listener = TcpListener::bind(addr).await.unwrap();
     tracing::info!("Server listening on {}", addr);
 

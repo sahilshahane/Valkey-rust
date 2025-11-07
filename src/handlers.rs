@@ -68,6 +68,9 @@ pub async fn delete_key(
     //     return (StatusCode::NOT_FOUND).into_response();
     // }
 
+    if !state.cache.contains_key(&key).await {
+        return (StatusCode::NOT_FOUND).into_response();
+    }
 
     if let Err(error) = state.wal.delete(&key).await{
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
