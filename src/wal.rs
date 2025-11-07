@@ -399,15 +399,6 @@ impl WAL {
             })?;
         }
 
-        tracing::info!("Flushing write-ahead-logs to kv_store table");
-
-        self.sync_db_tables().await.map_err(|err| {
-            tracing::error!("Failed to sync changes from wal_sync table to kv_store table");
-            io::Error::new(io::ErrorKind::Other, err)
-        })?;
-
-        tracing::info!("Successfully flushed write-ahead-logs to kv_store table");
-
         Ok(())
     }
 

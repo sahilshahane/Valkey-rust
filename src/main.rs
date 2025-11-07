@@ -105,6 +105,17 @@ async fn main() {
         return;
     }
 
+
+    tracing::info!("Flushing write-ahead-logs to kv_store table");
+
+    if let Err(err) = wal.sync_db_tables().await {
+        tracing::error!("Failed to sync changes from wal_sync table to kv_store table {err}");
+        return;
+    }
+
+    tracing::info!("Successfully flushed write-ahead-logs to kv_store table");
+
+
     wal.initialize_pool(config.wal_pool_size).await;
       
     tracing::info!("syncing write-ahead-log");
