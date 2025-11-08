@@ -18,13 +18,13 @@ use whirlwind::ShardMap;
 
 use crate::config::{Config, get_default_config};
 use crate::db_connection::load_kvstore_inmemory;
-use crate::wal::WAL;
+use crate::wal_manager::WAL;
 
 mod handlers;
 mod db_connection;
 mod models;
 mod error;
-mod wal;
+mod wal_manager;
 mod constants;
 mod config;
 
