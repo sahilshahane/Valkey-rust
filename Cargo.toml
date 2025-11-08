@@ -10,8 +10,13 @@ strip = "debuginfo"
 opt-level = 3
 panic = "abort"
 
+[profile.release-debug]
+inherits = "release"
+debug = true
+#rustflags = ["-C", "target-cpu=native", "--cfg", "tokio_unstable"]
+
 [build]
-rustflags = ["-C", "target-cpu=natisve"]
+rustflags = ["-C", "target-cpu=native"]
 
 [[bin]]
 name = "kvstore"
@@ -22,7 +27,7 @@ name = "load_test"
 path = "load_test.rs"
 
 [dependencies]
-tokio = { version = "1.48.0", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full", "tracing"] }
 axum = "0.8.6"
 sqlx = { version = "0.8", features = [ "runtime-tokio", "sqlite", "postgres", "tls-native-tls", "migrate", "rust_decimal" ] }
 serde = "1.0.228"
@@ -36,7 +41,7 @@ rand = "0.9.2"
 whirlwind = "0.1.1"
 chrono = "0.4.42"
 anyhow = "1.0.100"
-
+console-subscriber = "0.5.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.5"
