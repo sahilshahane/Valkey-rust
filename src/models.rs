@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
+use sonic_rs::{Deserialize, Serialize}; 
 
 
 #[derive(FromRow, Debug, Serialize, Deserialize)]
