@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
+use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 enum WorkloadType {
@@ -7,6 +8,7 @@ enum WorkloadType {
     GetAll,      // Only read requests with unique keys (disk-bound)
     GetPopular,  // Only read requests for popular keys (cache-bound)
     GetPut,      // Mixed workload
+    Stress,      // Maximum throughput stress test
 }
 
 impl WorkloadType {
@@ -16,6 +18,7 @@ impl WorkloadType {
             "getall" | "get-all" | "get_all" => Some(WorkloadType::GetAll),
             "getpopular" | "get-popular" | "get_popular" => Some(WorkloadType::GetPopular),
             "getput" | "get-put" | "get_put" | "mixed" => Some(WorkloadType::GetPut),
+            "stress" => Some(WorkloadType::Stress),
             _ => None,
         }
     }
@@ -26,6 +29,7 @@ impl WorkloadType {
             WorkloadType::GetAll => "GET-ALL: Read unique keys (disk-bound)",
             WorkloadType::GetPopular => "GET-POPULAR: Read hot keys (cache-bound)",
             WorkloadType::GetPut => "GET+PUT: Mixed workload",
+            WorkloadType::Stress => "STRESS: Maximum throughput test (no delays)",
         }
     }
 }
@@ -82,7 +86,7 @@ async fn run_worker_putall(
         let set_start = Instant::now();
         let set_result = client
             .post(format!("{}/key/{}", base_url, key))
-            .json(&serde_json::json!({ "value": value }))
+            .json(&sonic_rs::json!({ "value": value }))
             .send()
             .await;
 
@@ -185,7 +189,7 @@ async fn run_worker_getpopular(
         for key in &popular_keys {
             let _ = client
                 .post(format!("{}/key/{}", base_url, key))
-                .json(&serde_json::json!({ "value": format!("popular_value_{}", key) }))
+                .json(&sonic_rs::json!({ "value": format!("popular_value_{}", key) }))
                 .send()
                 .await;
         }
@@ -197,7 +201,8 @@ async fn run_worker_getpopular(
 
     while start.elapsed() < duration {
         // Randomly select from popular keys
-        let key = popular_keys[rand::random::<usize>() % popular_keys.len()];
+        let idx = rand::rng().random_range(0..popular_keys.len());
+        let key = popular_keys[idx];
 
         let get_start = Instant::now();
         let get_result = client
@@ -265,7 +270,7 @@ async fn run_worker_getput(
             let set_start = Instant::now();
             let set_result = client
                 .post(format!("{}/key/{}", base_url, key))
-                .json(&serde_json::json!({ "value": value }))
+                .json(&sonic_rs::json!({ "value": value }))
                 .send()
                 .await;
 
@@ -296,6 +301,105 @@ async fn run_worker_getput(
         }
 
         counter += 1;
+    }
+
+    println!("Worker {} finished", worker_id);
+    stats
+}
+
+// Workload: STRESS - Maximum throughput stress test
+async fn run_worker_stress(
+    worker_id: usize,
+    base_url: String,
+    duration: Duration,
+) -> Stats {
+    let client = reqwest::Client::new();
+    let mut stats = Stats::new();
+    let start = Instant::now();
+
+    println!("Worker {} started (STRESS workload)", worker_id);
+
+    // Pre-populate some hot keys for reads
+    let hot_keys: Vec<String> = (0..100)
+        .map(|i| format!("stress_hot_key_{}", i))
+        .collect();
+
+    if worker_id == 0 {
+        for key in &hot_keys {
+            let _ = client
+                .post(format!("{}/key/{}", base_url, key))
+                .json(&sonic_rs::json!({ "value": format!("hot_value_{}", key) }))
+                .send()
+                .await;
+        }
+        println!("Worker 0: Pre-populated stress test keys");
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut counter = 0u64;
+    while start.elapsed() < duration {
+        let op = rand::random::<u32>() % 100;
+
+        if op < 60 {
+            // 60% GET requests on hot keys (fast, cache hits)
+            let idx = rand::rng().random_range(0..hot_keys.len());
+            let key = &hot_keys[idx];
+            
+            let get_start = Instant::now();
+            let get_result = client
+                .get(format!("{}/key/{}", base_url, key))
+                .send()
+                .await;
+
+            match get_result {
+                Ok(response) if response.status().is_success() => {
+                    stats.successful_requests += 1;
+                    stats.total_latency_ms += get_start.elapsed().as_millis() as u64;
+                }
+                _ => stats.failed_requests += 1,
+            }
+        } else if op < 85 {
+            // 25% PUT requests
+            let key = format!("stress_key_{}_{}", worker_id, counter);
+            let value = format!("val_{}", counter);
+
+            let set_start = Instant::now();
+            let set_result = client
+                .post(format!("{}/key/{}", base_url, key))
+                .json(&sonic_rs::json!({ "value": value }))
+                .send()
+                .await;
+
+            match set_result {
+                Ok(response) if response.status().is_success() => {
+                    stats.successful_requests += 1;
+                    stats.total_latency_ms += set_start.elapsed().as_millis() as u64;
+                }
+                _ => stats.failed_requests += 1,
+            }
+        } else {
+            // 15% DELETE requests
+            let key = format!("stress_key_{}_{}", worker_id, rand::random::<u32>() % 1000);
+
+            let delete_start = Instant::now();
+            let delete_result = client
+                .delete(format!("{}/key/{}", base_url, key))
+                .send()
+                .await;
+
+            match delete_result {
+                Ok(_) => {
+                    stats.successful_requests += 1;
+                    stats.total_latency_ms += delete_start.elapsed().as_millis() as u64;
+                }
+                _ => stats.failed_requests += 1,
+            }
+        }
+
+        counter += 1;
+
+        // NO DELAYS - run at maximum speed!
     }
 
     println!("Worker {} finished", worker_id);
@@ -342,6 +446,11 @@ async fn run_load_test(
             WorkloadType::GetPut => {
                 tasks.spawn(async move {
                     run_worker_getput(worker_id, url, duration).await
+                });
+            }
+            WorkloadType::Stress => {
+                tasks.spawn(async move {
+                    run_worker_stress(worker_id, url, duration).await
                 });
             }
         }
@@ -431,4 +540,5 @@ async fn main() {
     println!("getall     - Read unique keys only (disk-bound, cache misses)");
     println!("getpopular - Read hot keys only (cache-bound, cache hits)");
     println!("getput     - Mixed workload (default, 70% GET, 20% PUT, 10% DELETE)");
+    println!("stress     - Maximum throughput test (60% GET, 25% PUT, 15% DELETE, no delays)");
 }
