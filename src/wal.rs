@@ -22,7 +22,8 @@ impl WALFile {
 pub struct WAL {
     db: Arc<DBPool>,
     logs_dir: String,
-    pool: WALPool
+    pool: WALPool,
+    pool_size: usize
 }
 
 
@@ -215,26 +216,6 @@ impl WALDecoder {
 impl WAL {
 
     pub async fn get_writer_file(&self) -> Result<RwLockWriteGuard<WALFile>, KVStoreError> {
-        // if self.pool.is_empty() {
-        //     tracing::error!("write-ahead-logger has 0 file writers in the pool");
-        //     return Err(KVStoreError::PoolError);
-        // }
-
-        // let mut rng = rand::rng();
-        // let n = self.pool.len();
-        // let start = rng.random_range(0..n);
-
-        // // let f = start.randm_range(0..n);
-        // // Try to find a writer we can acquire immediately
-        // for i in 0..n {
-        //     let idx = (start + i) % n;
-        //     let writer = self.pool[idx].try_write();
-
-        //     if let Ok(guard) = writer {
-        //         return Ok(guard);
-        //     }
-        // }
-
         for i in &self.pool {
             let writer = i.try_write();
 
@@ -243,7 +224,7 @@ impl WAL {
             }
         }
 
-       let writer = self.pool[0].write().await;
+       let writer = self.pool[fastrand::usize(0..self.pool_size)].write().await;
        return Ok(writer);
     }
 
@@ -721,6 +702,7 @@ impl WAL {
                 )));
         }
         
+        self.pool_size = pool.len();
         self.pool = pool;
     }
 
@@ -745,6 +727,7 @@ impl WAL {
                 db,
                 logs_dir: logs_dir.to_string(),
                 pool: vec![],
+                pool_size: 0,
             }
         )
     }
