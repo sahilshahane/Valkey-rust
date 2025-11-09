@@ -1,4 +1,4 @@
-use std::{ path::Path, sync::Arc, time::{ SystemTime, UNIX_EPOCH} };
+use std::{ path::Path, sync::Arc, time::{ SystemTime, UNIX_EPOCH, Duration} };
 use sqlx::types::Decimal;
 use tokio::{fs::{self, OpenOptions}, io::{self, AsyncReadExt, AsyncWriteExt}, sync::{Mutex, RwLock, RwLockWriteGuard}, time::interval};
 
@@ -215,6 +215,50 @@ impl WALDecoder {
 
 impl WAL {
 
+    async fn try_acquire_walfile_lock(lock_file: &str) -> io::Result<Option<tokio::fs::File>> {
+        const LOCK_STALE_TIMEOUT_SECS: u64 = 600; // 10 minutes - consider lock stale if not updated
+
+        // Check if lock file exists and get its age
+        if let Ok(metadata) = fs::metadata(lock_file).await {
+            if let Ok(elapsed) = metadata.modified()?.elapsed() {
+                if elapsed.as_secs() > LOCK_STALE_TIMEOUT_SECS {
+                    tracing::warn!("Lock file is stale (age: {:?}), removing and retrying...", elapsed);
+                    fs::remove_file(lock_file).await.ok();
+                } else {
+                    // Lock is fresh, another process is likely still processing
+                    tracing::warn!("Cannot acquire lock for file: {}, skipping...", lock_file);
+                    return Ok(None);
+                }
+            }
+        }
+
+        // Try to create lock file
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_file)
+            .await
+        {
+            Ok(file) => Ok(Some(file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                tracing::warn!("Cannot acquire lock for file: {} (already exists), skipping...", lock_file);
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn touch_walfile_lock(lock_file: &str) -> io::Result<()> {
+        // Update the file's modified time by opening and closing it
+        OpenOptions::new()
+            .write(true)
+            .open(lock_file)
+            .await?
+            .sync_all()
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_writer_file(&self) -> Result<RwLockWriteGuard<WALFile>, KVStoreError> {
         for i in &self.pool {
             let writer = i.try_write();
@@ -278,6 +322,125 @@ impl WAL {
         
         return Ok(())
     }
+    
+    pub async fn recover_file(&self, wal_file: &str) ->  std::io::Result<()> {
+        tracing::info!("Processing WAL file: {}", wal_file);
+        
+        // Create lock file path
+        let lock_file = format!("{}.lock", wal_file);
+        
+        // Try to acquire lock
+        let _lock_file_handle = match Self::try_acquire_walfile_lock(&lock_file).await {
+            Ok(Some(handle)) => handle,
+            Ok(None) => {
+                // Could not acquire lock, return error
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Cannot acquire lock for WAL file: {}", wal_file)
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Error trying to acquire lock for {}: {}", wal_file, e);
+                return Err(e);
+            }
+        };
+        
+        let mut read_file = OpenOptions::new()
+            .read(true)
+            .open(&wal_file)
+            .await
+            .expect(&format!("Failed to read WAL log : {}", &wal_file));
+
+        let mut decoder = WALDecoder::new();
+        const CHUNK_SIZE: usize = 8192;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+
+        let mut tx = self.db.begin().await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    
+        const BATCH_SIZE: usize = 20_000;
+        let mut set_batch: Vec<(String, u128, String)> = Vec::with_capacity(BATCH_SIZE);
+        let mut delete_batch: Vec<(String, u128)> = Vec::with_capacity(BATCH_SIZE);
+        
+        // Heartbeat interval for lock file
+        let mut heartbeat_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+   
+        loop {
+            tokio::select! {
+                bytes_result = read_file.read(&mut buffer) => {
+                    let bytes_read = bytes_result?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+
+                    // Feed data to decoder
+                    decoder.feed(&buffer[..bytes_read]);
+
+                    // Process all complete operations
+                    while let Some(result) = decoder.next_operation() {
+                        match result {
+                            Ok(operation) => {
+                                match operation {
+                                    WALOperation::Set { timestamp, key, value } => {
+                                        set_batch.push((key, timestamp, value));
+                                    }
+                                    WALOperation::Delete { timestamp, key } => {
+                                        delete_batch.push((key, timestamp));
+                                    }
+                                }
+
+                                if set_batch.len() >= BATCH_SIZE || delete_batch.len() >= BATCH_SIZE {
+                                    self.execute_set_batch(&mut tx, &mut set_batch).await?;
+                                    self.execute_delete_batch(&mut tx, &mut delete_batch).await?;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to decode operation: {}", e);
+                            }
+                        }
+                    }
+
+                    // Clean up processed data
+                    decoder.compact();
+                }
+                _ = heartbeat_interval.tick() => {
+                    // Update lock file timestamp
+                    if let Err(e) = Self::touch_walfile_lock(&lock_file).await {
+                        tracing::warn!("Failed to update lock file heartbeat: {}", e);
+                    } else {
+                        tracing::debug!("Updated lock file heartbeat for: {}", wal_file);
+                    }
+                }
+            }
+        }
+
+        // Execute remaining batches
+        if !set_batch.is_empty() {
+            self.execute_set_batch(&mut tx, &mut set_batch).await?;
+        }
+        if !delete_batch.is_empty() {
+            self.execute_delete_batch(&mut tx, &mut delete_batch).await?;
+        }
+
+        tx.commit().await.map_err(|err| {
+            tracing::error!("Failed to commit WAL file to db {wal_file} {err}");
+            io::Error::new(io::ErrorKind::Other, err)
+        })?;
+        
+        // Remove WAL file
+        fs::remove_file(&wal_file).await.map_err(|err|{
+            tracing::error!("Failed to remove WAL file {wal_file} {err}");
+            io::Error::new(io::ErrorKind::Other, err)
+        })?;
+        
+        // Remove lock file
+        fs::remove_file(&lock_file).await.map_err(|err|{
+            tracing::error!("Failed to remove lock file {lock_file} {err}");
+            io::Error::new(io::ErrorKind::Other, err)
+        })?;
+        
+        Ok(())
+    }
 
     pub async fn recover(&self) ->  std::io::Result<()> {
         // flush existing wal files to db
@@ -300,84 +463,12 @@ impl WAL {
 
         wals.sort_unstable_by(|a, b| b.cmp(a));
 
-
         // Process WAL files in order
         for wal_file in wals {
-            
-            tracing::info!("Processing WAL file: {}", wal_file);
-            
-            let mut read_file = OpenOptions::new()
-                .read(true)
-                .open(&wal_file)
-                .await
-                .expect(&format!("Failed to read WAL log : {}", &wal_file));
-
-            let mut decoder = WALDecoder::new();
-            const CHUNK_SIZE: usize = 8192;
-            let mut buffer = vec![0u8; CHUNK_SIZE];
-
-            let mut tx = self.db.begin().await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        
-            const BATCH_SIZE: usize = 20_000;
-            let mut set_batch: Vec<(String, u128, String)> = Vec::with_capacity(BATCH_SIZE);
-            let mut delete_batch: Vec<(String, u128)> = Vec::with_capacity(BATCH_SIZE);
-       
-            loop {
-                let bytes_read = read_file.read(&mut buffer).await?;
-                if bytes_read == 0 {
-                    break;
-                }
-
-                // Feed data to decoder
-                decoder.feed(&buffer[..bytes_read]);
-
-                // Process all complete operations
-                while let Some(result) = decoder.next_operation() {
-                    match result {
-                        Ok(operation) => {
-                            match operation {
-                                WALOperation::Set { timestamp, key, value } => {
-                                    set_batch.push((key, timestamp, value));
-                                }
-                                WALOperation::Delete { timestamp, key } => {
-                                    delete_batch.push((key, timestamp));
-                                }
-                            }
-
-                            if set_batch.len() >= BATCH_SIZE || delete_batch.len() >= BATCH_SIZE {
-                                self.execute_set_batch(&mut tx, &mut set_batch).await?;
-                                self.execute_delete_batch(&mut tx, &mut delete_batch).await?;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to decode operation: {}", e);
-                        }
-                    }
-                }
-
-                // Clean up processed data
-                decoder.compact();
+            if let Err(e) = self.recover_file(&wal_file).await {
+                tracing::error!("Failed to recover WAL file {}: {}", wal_file, e);
+                // Continue to next file even if one fails
             }
-
-            // Execute remaining batches
-            if !set_batch.is_empty() {
-                self.execute_set_batch(&mut tx, &mut set_batch).await?;
-            }
-            if !delete_batch.is_empty() {
-                self.execute_delete_batch(&mut tx, &mut delete_batch).await?;
-            }
-
-            tx.commit().await.map_err(|err| {
-                tracing::error!("Failed to commit WAL file to db {wal_file} {err}");
-                io::Error::new(io::ErrorKind::Other, err)
-            })?;
-            
-
-            fs::remove_file(&wal_file).await.map_err(|err|{
-                tracing::error!("Failed to remove WAL file {wal_file} {err}");
-                io::Error::new(io::ErrorKind::Other, err)
-            })?;
         }
 
         Ok(())
