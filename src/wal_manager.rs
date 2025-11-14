@@ -1,6 +1,6 @@
 use std::{ path::Path, sync::Arc, time::{ SystemTime, UNIX_EPOCH, Duration} };
 use sqlx::types::Decimal;
-use tokio::{fs::{self, OpenOptions}, io::{self, AsyncReadExt, AsyncWriteExt}, sync::{Mutex, RwLock, RwLockWriteGuard}, time::interval};
+use tokio::{fs::{self, OpenOptions}, io::{self, AsyncReadExt, AsyncWriteExt}, sync::{Mutex, RwLock, RwLockWriteGuard, mpsc}, time::{interval, sleep, timeout}};
 
 use crate::{DBPool, error::KVStoreError};
 
@@ -15,7 +15,7 @@ pub struct WALFile {
 impl WALFile {
     pub async fn write_and_flush(&mut self, buf: &[u8]) -> io::Result<()> {
         self.file.write_all(buf).await?;
-        self.file.flush().await
+        self.file.sync_data().await
     }
 }
 
@@ -23,7 +23,9 @@ pub struct WAL {
     db: Arc<DBPool>,
     logs_dir: String,
     pool: WALPool,
-    pool_size: usize
+    pool_size: usize,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>>,
 }
 
 
@@ -292,10 +294,9 @@ impl WAL {
         buffer.extend_from_slice(val_bytes);
         buffer.push(b'\n');
 
-
-        let mut guard = self.get_writer_file().await.map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e:?}")))?;
-        guard.write_and_flush(&buffer).await?;
-        drop(guard);
+        // Send to background writer channel
+        self.tx.send(buffer)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to send to WAL channel: {}", e)))?;
 
         return Ok(())
     }
@@ -316,9 +317,9 @@ impl WAL {
         buffer.extend_from_slice(key_bytes);
         buffer.push(b'\n');
 
-        let mut guard = self.get_writer_file().await.map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e:?}")))?;
-        guard.write_and_flush(&buffer).await?;
-        drop(guard);
+        // Send to background writer channel
+        self.tx.send(buffer)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to send to WAL channel: {}", e)))?;
         
         return Ok(())
     }
@@ -621,14 +622,100 @@ impl WAL {
 
 
     pub async fn new(db: Arc<DBPool>, logs_dir: &str) -> anyhow::Result<Self> {
-        Ok(
-            WAL { 
-                db,
-                logs_dir: logs_dir.to_string(),
-                pool: vec![],
-                pool_size: 0,
+        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        
+        Ok(WAL { 
+            db,
+            logs_dir: logs_dir.to_string(),
+            pool: vec![],
+            pool_size: 0,
+            tx,
+            rx: Arc::new(Mutex::new(Some(rx))),
+        })
+    }
+
+    pub async fn start_background_writer(self: Arc<Self>) {
+        // Take ownership of the receiver from the WAL struct
+        let rx = {
+            let mut rx_option = self.rx.lock().await;
+            rx_option.take()
+        };
+        
+        if let Some(rx) = rx {
+            tokio::spawn({
+                let wal = Arc::clone(&self);
+                async move {
+                    wal.background_writer_impl(rx).await;
+                }
+            });
+        } else {
+            tracing::error!("Background writer already started or receiver already taken");
+        }
+    }
+
+    /// Background writer task that receives buffered data from the channel
+    /// and writes it to the WAL file on a separate async task
+    /// Flushes when buffer reaches 64KB OR 10ms has passed since last flush
+    async fn background_writer_impl(&self, mut rx: mpsc::UnboundedReceiver<Vec<u8>>) {
+        tracing::info!("WAL background writer started");
+        
+        const FLUSH_THRESHOLD: usize = 64 * 1024; // 64KB threshold for flushing
+        let mut buffer = Vec::with_capacity(FLUSH_THRESHOLD);
+        
+        const FLUSH_TIMEOUT_MS: u64 = 10; // 10ms timeout
+
+        let mut flush_timer = tokio::time::interval(Duration::from_millis(FLUSH_TIMEOUT_MS));
+        flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                // Receive new data from channel
+                data_opt = rx.recv() => {
+                    match data_opt {
+                        Some(data) => {
+                            buffer.extend_from_slice(&data);
+
+                            // If buffer exceeds threshold, flush immediately
+                            if buffer.len() >= FLUSH_THRESHOLD {
+                                if let Err(e) = self.flush_buffer(&buffer).await {
+                                    tracing::error!("Failed to flush WAL buffer: {}", e);
+                                }
+                                buffer.clear();
+                                flush_timer.reset(); // Reset timer after flush
+                            }
+                        }
+                        None => {
+                            // Channel closed, flush remaining data and exit
+                            if !buffer.is_empty() {
+                                if let Err(e) = self.flush_buffer(&buffer).await {
+                                    tracing::error!("Failed to flush remaining WAL buffer: {}", e);
+                                }
+                            }
+                            tracing::info!("WAL background writer shutting down");
+                            return;
+                        }
+                    }
+                }
+                
+                // Timer tick - flush buffer if it has data
+                _ = flush_timer.tick() => {
+                    if !buffer.is_empty() {
+                        if let Err(e) = self.flush_buffer(&buffer).await {
+                            tracing::error!("Failed to flush WAL buffer on timeout: {}", e);
+                        }
+                        buffer.clear();
+                    }
+                }
             }
-        )
+        }
+    }
+
+    /// Flush accumulated buffer to WAL file
+    async fn flush_buffer(&self, buffer: &[u8]) -> io::Result<()> {
+        let mut guard = self.get_writer_file().await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e:?}")))?;
+        guard.write_and_flush(buffer).await?;
+        Ok(())
     }
 
     pub fn start_background_sync(self: Arc<Self>) {

@@ -9,6 +9,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 use axum::{http::StatusCode, response::IntoResponse};
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tower_http::trace::TraceLayer;
@@ -132,11 +133,14 @@ async fn main() {
         return;
     };
 
-    // Start background sync task
-    // wal.clone().start_background_sync();
-    tracing::info!("Started background WAL sync task");
+    // Wrap WAL in Arc for background task
+    let wal = Arc::new(wal);
+    
+    // Start background writer task on a separate core
+    wal.clone().start_background_writer().await;
+    tracing::info!("Started background WAL writer task");
 
-    let state = Arc::new(AppState { pool, cache, wal: Arc::new(wal), config: config.clone() });
+    let state = Arc::new(AppState { pool, cache, wal, config: config.clone() });
 
     // Build router
     let app = Router::new()
