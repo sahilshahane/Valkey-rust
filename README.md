@@ -7,7 +7,17 @@ cargo build --release --bin kvstore
 
 ## Benchmarks
 
-### Load Test Results
+### Machine Info
+```
+CPU : Intel i5 11400H
+Base Clock : 2.7Ghz
+Boosted Clock : 4.5Ghz 
+Physical Cores : 6
+Logical Cores : 12
+RAM : 8GB
+Storage : (512gb NVMe) WDC PC SN530 SDBPNPZ-512G-1114
+```
+
 
 #### PUT-ALL: Create/Delete only (disk-bound)
 | Metric | Value |
