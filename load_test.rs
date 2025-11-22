@@ -87,13 +87,14 @@ async fn run_worker_putall(
 
     let mut counter = 0u64;
     while start.elapsed() < duration {
-        let key = format!("key_{}_{}_{}", worker_id, counter, rand::random::<u32>());
-        let value = format!("value_{}", rand::random::<u64>());
+        let key = format!("key_{}_{}", worker_id, counter);
+        let value = format!("value_{}", counter);
+        let url = format!("{}/key/{}", base_url, key);
 
         // CREATE operation
         let set_start = Instant::now();
         let set_result = client
-            .post(format!("{}/key/{}", base_url, key))
+            .post(&url)
             .json(&sonic_rs::json!({ "value": value }))
             .send()
             .await;
@@ -109,7 +110,7 @@ async fn run_worker_putall(
         // DELETE operation
         let delete_start = Instant::now();
         let delete_result = client
-            .delete(format!("{}/key/{}", base_url, key))
+            .delete(&url)
             .send()
             .await;
 
