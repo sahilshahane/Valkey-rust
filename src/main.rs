@@ -10,6 +10,7 @@ use axum::{http::StatusCode, response::IntoResponse};
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
+use tonic::transport::Server;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tower_http::trace::TraceLayer;
@@ -20,8 +21,11 @@ use dashmap::DashMap;
 
 use crate::config::{Config, get_default_config};
 use crate::db_connection::load_kvstore_inmemory;
+use crate::grpc_server::KVStoreGRPC;
+use crate::grpc_server::kvstore_grpc::k_vstore_server::KVstoreServer;
 use crate::wal_manager::WAL;
 
+mod grpc_server;
 mod handlers;
 mod db_connection;
 mod models;
@@ -50,7 +54,7 @@ async fn health_check() -> impl IntoResponse {
 
 // #[tokio::main(flavor = "current_thread")]
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
+async fn main(){
     // Load .env file at the start of your application
     dotenvy::dotenv().ok();
 
@@ -145,20 +149,5 @@ async fn main() {
 
     let state = Arc::new(AppState { pool, cache, wal, config: config.clone() });
 
-    // Build router
-    let app = Router::new()
-        .route("/health", get(health_check))
-        .route("/key/{key}", 
-        get(handlers::get_key)
-        .post(handlers::set_key)
-        .delete(handlers::delete_key))
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-     // Start server
-    let addr = &format!("0.0.0.0:{}", config.port);
-    let listener = TcpListener::bind(addr).await.unwrap();
-    tracing::info!("Server listening on {}", addr);
-
-    axum::serve(listener, app).await.unwrap();
+    return grpc_server::run_grpc_server(state).await.unwrap();
 }

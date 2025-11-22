@@ -1,0 +1,49 @@
+Running PUT-ALL test (disk-bound)...
+=== Load Test Results ===
+Workload: PUT-ALL: Create/Delete only (disk-bound)
+Duration: 30.21s
+Successful requests: 7512744
+Failed requests: 0
+Total requests: 7512744
+Throughput: 248664.61 req/sec
+Average latency: 0.01ms
+Success rate: 100.00%
+
+
+
+Running GET-ALL test (disk-bound)...
+=== Load Test Results ===
+Workload: GET-ALL: Read unique keys (disk-bound)
+Duration: 30.23s
+Successful requests: 7993519
+Failed requests: 0
+Total requests: 7993519
+Throughput: 264453.95 req/sec
+Average latency: 0.00ms
+Success rate: 100.00%
+
+
+
+Running GET-POPULAR test (cache-bound)...
+=== Load Test Results ===
+Workload: GET-POPULAR: Read hot keys (cache-bound)
+Duration: 30.23s
+Successful requests: 7907434
+Failed requests: 159
+Total requests: 7907593
+Throughput: 261575.81 req/sec
+Average latency: 0.00ms
+Success rate: 100.00%
+
+
+
+Running GET+PUT test (mixed workload)...
+=== Load Test Results ===
+Workload: GET+PUT: Mixed workload
+Duration: 30.23s
+Successful requests: 7786651
+Failed requests: 0
+Total requests: 7786651
+Throughput: 257541.90 req/sec
+Average latency: 0.01ms
+Success rate: 100.00%

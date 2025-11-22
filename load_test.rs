@@ -1,6 +1,25 @@
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+
+
+
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use rand::Rng;
+use tonic::Request;
+
+pub mod kvstore_grpc {
+    tonic::include_proto!("kvstore");
+}
+
+use kvstore_grpc::k_vstore_client::KVstoreClient;
+use kvstore_grpc::{KeyRequest, SetKeyRequest};
+
 
 #[derive(Debug, Clone, Copy)]
 enum WorkloadType {
@@ -68,10 +87,17 @@ impl Stats {
 // Workload: PUT-ALL - Only create/delete (disk-bound)
 async fn run_worker_putall(
     worker_id: usize,
-    base_url: String,
+    grpc_addr: String,
     duration: Duration,
 ) -> Stats {
-    let client = reqwest::Client::new();
+    let mut client = match KVstoreClient::connect(grpc_addr.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Worker {} failed to connect: {}", worker_id, e);
+            return Stats::new();
+        }
+    };
+    
     let mut stats = Stats::new();
     let start = Instant::now();
 
@@ -85,32 +111,32 @@ async fn run_worker_putall(
         // CREATE operation
         let set_start = Instant::now();
         let set_result = client
-            .post(format!("{}/key/{}", base_url, key))
-            .json(&sonic_rs::json!({ "value": value }))
-            .send()
+            .set_key(Request::new(SetKeyRequest {
+                key: key.clone(),
+                value,
+            }))
             .await;
 
         match set_result {
-            Ok(response) if response.status().is_success() => {
+            Ok(_) => {
                 stats.successful_requests += 1;
                 stats.total_latency_us += set_start.elapsed().as_micros() as u64;
             }
-            _ => stats.failed_requests += 1,
+            Err(_) => stats.failed_requests += 1,
         }
 
         // DELETE operation
         let delete_start = Instant::now();
         let delete_result = client
-            .delete(format!("{}/key/{}", base_url, key))
-            .send()
+            .delete_key(Request::new(KeyRequest { key }))
             .await;
 
         match delete_result {
-            Ok(response) if response.status().is_success() => {
+            Ok(_) => {
                 stats.successful_requests += 1;
                 stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
             }
-            _ => stats.failed_requests += 1,
+            Err(_) => stats.failed_requests += 1,
         }
 
         counter += 1;
@@ -123,10 +149,17 @@ async fn run_worker_putall(
 // Workload: GET-ALL - Only read unique keys (disk-bound, cache misses)
 async fn run_worker_getall(
     worker_id: usize,
-    base_url: String,
+    grpc_addr: String,
     duration: Duration,
 ) -> Stats {
-    let client = reqwest::Client::new();
+    let mut client = match KVstoreClient::connect(grpc_addr.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Worker {} failed to connect: {}", worker_id, e);
+            return Stats::new();
+        }
+    };
+    
     let mut stats = Stats::new();
     let start = Instant::now();
 
@@ -139,8 +172,7 @@ async fn run_worker_getall(
 
         let get_start = Instant::now();
         let get_result = client
-            .get(format!("{}/key/{}", base_url, key))
-            .send()
+            .get_key(Request::new(KeyRequest { key }))
             .await;
 
         match get_result {
@@ -148,7 +180,7 @@ async fn run_worker_getall(
                 stats.successful_requests += 1;
                 stats.total_latency_us += get_start.elapsed().as_micros() as u64;
             }
-            _ => stats.failed_requests += 1,
+            Err(_) => stats.failed_requests += 1,
         }
 
         counter += 1;
@@ -161,10 +193,17 @@ async fn run_worker_getall(
 // Workload: GET-POPULAR - Only read popular keys (cache-bound, cache hits)
 async fn run_worker_getpopular(
     worker_id: usize,
-    base_url: String,
+    grpc_addr: String,
     duration: Duration,
 ) -> Stats {
-    let client = reqwest::Client::new();
+    let mut client = match KVstoreClient::connect(grpc_addr.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Worker {} failed to connect: {}", worker_id, e);
+            return Stats::new();
+        }
+    };
+    
     let mut stats = Stats::new();
     let start = Instant::now();
 
@@ -188,9 +227,10 @@ async fn run_worker_getpopular(
     if worker_id == 0 {
         for key in &popular_keys {
             let _ = client
-                .post(format!("{}/key/{}", base_url, key))
-                .json(&sonic_rs::json!({ "value": format!("popular_value_{}", key) }))
-                .send()
+                .set_key(Request::new(SetKeyRequest {
+                    key: key.to_string(),
+                    value: format!("popular_value_{}", key),
+                }))
                 .await;
         }
         println!("Worker 0: Pre-populated popular keys");
@@ -206,16 +246,17 @@ async fn run_worker_getpopular(
 
         let get_start = Instant::now();
         let get_result = client
-            .get(format!("{}/key/{}", base_url, key))
-            .send()
+            .get_key(Request::new(KeyRequest {
+                key: key.to_string(),
+            }))
             .await;
 
         match get_result {
-            Ok(response) if response.status().is_success() => {
+            Ok(_) => {
                 stats.successful_requests += 1;
                 stats.total_latency_us += get_start.elapsed().as_micros() as u64;
             }
-            _ => stats.failed_requests += 1,
+            Err(_) => stats.failed_requests += 1,
         }
     }
 
@@ -226,10 +267,17 @@ async fn run_worker_getpopular(
 // Workload: GET+PUT - Mixed workload
 async fn run_worker_getput(
     worker_id: usize,
-    base_url: String,
+    grpc_addr: String,
     duration: Duration,
 ) -> Stats {
-    let client = reqwest::Client::new();
+    let mut client = match KVstoreClient::connect(grpc_addr.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Worker {} failed to connect: {}", worker_id, e);
+            return Stats::new();
+        }
+    };
+    
     let mut stats = Stats::new();
     let start = Instant::now();
 
@@ -251,8 +299,7 @@ async fn run_worker_getput(
 
             let get_start = Instant::now();
             let get_result = client
-                .get(format!("{}/key/{}", base_url, key))
-                .send()
+                .get_key(Request::new(KeyRequest { key }))
                 .await;
 
             match get_result {
@@ -260,7 +307,7 @@ async fn run_worker_getput(
                     stats.successful_requests += 1;
                     stats.total_latency_us += get_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         } else if random < 90 {
             // 20% PUT requests
@@ -269,17 +316,15 @@ async fn run_worker_getput(
 
             let set_start = Instant::now();
             let set_result = client
-                .post(format!("{}/key/{}", base_url, key))
-                .json(&sonic_rs::json!({ "value": value }))
-                .send()
+                .set_key(Request::new(SetKeyRequest { key, value }))
                 .await;
 
             match set_result {
-                Ok(response) if response.status().is_success() => {
+                Ok(_) => {
                     stats.successful_requests += 1;
                     stats.total_latency_us += set_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         } else {
             // 10% DELETE requests
@@ -287,8 +332,7 @@ async fn run_worker_getput(
 
             let delete_start = Instant::now();
             let delete_result = client
-                .delete(format!("{}/key/{}", base_url, key))
-                .send()
+                .delete_key(Request::new(KeyRequest { key }))
                 .await;
 
             match delete_result {
@@ -296,7 +340,7 @@ async fn run_worker_getput(
                     stats.successful_requests += 1;
                     stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         }
 
@@ -310,10 +354,17 @@ async fn run_worker_getput(
 // Workload: STRESS - Maximum throughput stress test
 async fn run_worker_stress(
     worker_id: usize,
-    base_url: String,
+    grpc_addr: String,
     duration: Duration,
 ) -> Stats {
-    let client = reqwest::Client::new();
+    let mut client = match KVstoreClient::connect(grpc_addr.clone()).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Worker {} failed to connect: {}", worker_id, e);
+            return Stats::new();
+        }
+    };
+    
     let mut stats = Stats::new();
     let start = Instant::now();
 
@@ -327,9 +378,10 @@ async fn run_worker_stress(
     if worker_id == 0 {
         for key in &hot_keys {
             let _ = client
-                .post(format!("{}/key/{}", base_url, key))
-                .json(&sonic_rs::json!({ "value": format!("hot_value_{}", key) }))
-                .send()
+                .set_key(Request::new(SetKeyRequest {
+                    key: key.clone(),
+                    value: format!("hot_value_{}", key),
+                }))
                 .await;
         }
         println!("Worker 0: Pre-populated stress test keys");
@@ -348,16 +400,17 @@ async fn run_worker_stress(
             
             let get_start = Instant::now();
             let get_result = client
-                .get(format!("{}/key/{}", base_url, key))
-                .send()
+                .get_key(Request::new(KeyRequest {
+                    key: key.clone(),
+                }))
                 .await;
 
             match get_result {
-                Ok(response) if response.status().is_success() => {
+                Ok(_) => {
                     stats.successful_requests += 1;
                     stats.total_latency_us += get_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         } else if op < 85 {
             // 25% PUT requests
@@ -366,17 +419,15 @@ async fn run_worker_stress(
 
             let set_start = Instant::now();
             let set_result = client
-                .post(format!("{}/key/{}", base_url, key))
-                .json(&sonic_rs::json!({ "value": value }))
-                .send()
+                .set_key(Request::new(SetKeyRequest { key, value }))
                 .await;
 
             match set_result {
-                Ok(response) if response.status().is_success() => {
+                Ok(_) => {
                     stats.successful_requests += 1;
                     stats.total_latency_us += set_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         } else {
             // 15% DELETE requests
@@ -384,8 +435,7 @@ async fn run_worker_stress(
 
             let delete_start = Instant::now();
             let delete_result = client
-                .delete(format!("{}/key/{}", base_url, key))
-                .send()
+                .delete_key(Request::new(KeyRequest { key }))
                 .await;
 
             match delete_result {
@@ -393,7 +443,7 @@ async fn run_worker_stress(
                     stats.successful_requests += 1;
                     stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
                 }
-                _ => stats.failed_requests += 1,
+                Err(_) => stats.failed_requests += 1,
             }
         }
 
@@ -407,13 +457,13 @@ async fn run_worker_stress(
 }
 
 async fn run_load_test(
-    base_url: &str,
+    grpc_addr: &str,
     num_workers: usize,
     duration_secs: u64,
     workload_type: WorkloadType,
 ) {
     println!("Starting closed-loop load test:");
-    println!("  URL: {}", base_url);
+    println!("  gRPC Address: {}", grpc_addr);
     println!("  Workload: {}", workload_type.description());
     println!("  Workers (concurrent users): {}", num_workers);
     println!("  Duration: {} seconds", duration_secs);
@@ -425,32 +475,32 @@ async fn run_load_test(
 
     // Spawn workers based on workload type
     for worker_id in 0..num_workers {
-        let url = base_url.to_string();
+        let addr = grpc_addr.to_string();
         
         match workload_type {
             WorkloadType::PutAll => {
                 tasks.spawn(async move {
-                    run_worker_putall(worker_id, url, duration).await
+                    run_worker_putall(worker_id, addr, duration).await
                 });
             }
             WorkloadType::GetAll => {
                 tasks.spawn(async move {
-                    run_worker_getall(worker_id, url, duration).await
+                    run_worker_getall(worker_id, addr, duration).await
                 });
             }
             WorkloadType::GetPopular => {
                 tasks.spawn(async move {
-                    run_worker_getpopular(worker_id, url, duration).await
+                    run_worker_getpopular(worker_id, addr, duration).await
                 });
             }
             WorkloadType::GetPut => {
                 tasks.spawn(async move {
-                    run_worker_getput(worker_id, url, duration).await
+                    run_worker_getput(worker_id, addr, duration).await
                 });
             }
             WorkloadType::Stress => {
                 tasks.spawn(async move {
-                    run_worker_stress(worker_id, url, duration).await
+                    run_worker_stress(worker_id, addr, duration).await
                 });
             }
         }
@@ -491,13 +541,21 @@ async fn run_load_test(
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+
+    #[cfg(not(target_env = "msvc"))]
+    tracing::info!("✅ Using jemalloc allocator for better performance");
+    
+    #[cfg(target_env = "msvc")]
+    tracing::warn!("⚠️  Using system allocator (jemalloc not available on MSVC)");
+
+
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
 
-    let base_url = args
+    let grpc_addr = args
         .get(1)
         .map(|s| s.as_str())
-        .unwrap_or("http://localhost:4000");
+        .unwrap_or("http://localhost:50051");
 
     let num_workers = args
         .get(2)
@@ -514,26 +572,20 @@ async fn main() {
         .and_then(|s| WorkloadType::from_str(s))
         .unwrap_or(WorkloadType::GetPut);
 
-    // First, check if server is reachable
-    println!("Checking server health at {}...", base_url);
-    let client = reqwest::Client::new();
-    match client.get(format!("{}/health", base_url)).send().await {
-        Ok(response) if response.status().is_success() => {
-            println!("✓ Server is reachable\n");
-        }
-        Ok(response) => {
-            eprintln!("✗ Server returned status: {}", response.status());
-            eprintln!("Make sure your KV server is running!");
-            return;
+    // First, check if gRPC server is reachable
+    println!("Checking gRPC server at {}...", grpc_addr);
+    match KVstoreClient::connect(grpc_addr.to_string()).await {
+        Ok(_) => {
+            println!("✓ gRPC server is reachable\n");
         }
         Err(e) => {
-            eprintln!("✗ Failed to connect to server: {}", e);
-            eprintln!("Make sure your KV server is running at {}", base_url);
+            eprintln!("✗ Failed to connect to gRPC server: {}", e);
+            eprintln!("Make sure your KV gRPC server is running at {}", grpc_addr);
             return;
         }
     }
 
-    run_load_test(base_url, num_workers, duration_secs, workload_type).await;
+    run_load_test(grpc_addr, num_workers, duration_secs, workload_type).await;
     
     println!("\n=== Workload Types Available ===");
     println!("putall     - Create/Delete only (disk-bound at database)");

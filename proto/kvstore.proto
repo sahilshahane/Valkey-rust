@@ -1,0 +1,23 @@
+syntax = "proto3";
+package kvstore;
+
+message Void {} // An empty message type
+
+message SetKeyRequest {
+    string key = 1;
+    string value = 2;
+}
+
+message KeyRequest {
+    string key = 1;
+}
+
+message GetKeyReply {
+    string value = 1;
+}
+
+service KVstore {
+    rpc GetKey (KeyRequest) returns (GetKeyReply);
+    rpc SetKey (SetKeyRequest) returns (Void);
+    rpc DeleteKey (KeyRequest) returns (Void);
+}
