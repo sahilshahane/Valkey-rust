@@ -446,6 +446,10 @@ impl WAL {
     pub async fn recover(&self) ->  std::io::Result<()> {
         // flush existing wal files to db
 
+        if !fs::try_exists(&self.logs_dir).await.unwrap_or(false) {
+           return Ok(());
+        }
+
         let mut entries = fs::read_dir(&self.logs_dir).await?;
 
         let mut wals = Vec::new();
@@ -592,6 +596,9 @@ impl WAL {
     pub async fn initialize_pool(&mut self, pool_size: usize) { 
         let mut pool = Vec::with_capacity(pool_size);
 
+        if let Err(err) = fs::create_dir_all(&self.logs_dir).await{
+            panic!("Failed to create logs directory. Error - {}", err);
+        };
 
         for _ in 0..pool_size {
             pool.push(
@@ -659,10 +666,10 @@ impl WAL {
     async fn background_writer_impl(&self, mut rx: mpsc::UnboundedReceiver<Vec<u8>>) {
         tracing::info!("WAL background writer started");
         
-        const FLUSH_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
+        const FLUSH_THRESHOLD_BYTES: usize = 128 * 1024 * 1024;
         let mut buffer = Vec::with_capacity(FLUSH_THRESHOLD_BYTES);
         
-        const FLUSH_TIMEOUT_MS: u64 = 1000;
+        const FLUSH_TIMEOUT_MS: u64 = 200;
 
         let mut flush_timer = tokio::time::interval(Duration::from_millis(FLUSH_TIMEOUT_MS));
         flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
