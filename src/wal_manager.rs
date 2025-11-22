@@ -655,14 +655,14 @@ impl WAL {
 
     /// Background writer task that receives buffered data from the channel
     /// and writes it to the WAL file on a separate async task
-    /// Flushes when buffer reaches 64KB OR 10ms has passed since last flush
+    /// Flushes when buffer reaches FLUSH_THRESHOLD OR FLUSH_TIMEOUT_MS has passed since last flush
     async fn background_writer_impl(&self, mut rx: mpsc::UnboundedReceiver<Vec<u8>>) {
         tracing::info!("WAL background writer started");
         
-        const FLUSH_THRESHOLD: usize = 64 * 1024; // 64KB threshold for flushing
-        let mut buffer = Vec::with_capacity(FLUSH_THRESHOLD);
+        const FLUSH_THRESHOLD_BYTES: usize = 2 * 1024 * 1024;
+        let mut buffer = Vec::with_capacity(FLUSH_THRESHOLD_BYTES);
         
-        const FLUSH_TIMEOUT_MS: u64 = 10; // 10ms timeout
+        const FLUSH_TIMEOUT_MS: u64 = 1000;
 
         let mut flush_timer = tokio::time::interval(Duration::from_millis(FLUSH_TIMEOUT_MS));
         flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -676,7 +676,7 @@ impl WAL {
                             buffer.extend_from_slice(&data);
 
                             // If buffer exceeds threshold, flush immediately
-                            if buffer.len() >= FLUSH_THRESHOLD {
+                            if buffer.len() >= FLUSH_THRESHOLD_BYTES {
                                 if let Err(e) = self.flush_buffer(&buffer).await {
                                     tracing::error!("Failed to flush WAL buffer: {}", e);
                                 }
