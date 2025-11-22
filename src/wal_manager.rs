@@ -662,7 +662,7 @@ impl WAL {
         const FLUSH_THRESHOLD: usize = 64 * 1024; // 64KB threshold for flushing
         let mut buffer = Vec::with_capacity(FLUSH_THRESHOLD);
         
-        const FLUSH_TIMEOUT_MS: u64 = 10; // 10ms timeout
+        const FLUSH_TIMEOUT_MS: u64 = 1000; // 10ms timeout
 
         let mut flush_timer = tokio::time::interval(Duration::from_millis(FLUSH_TIMEOUT_MS));
         flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
