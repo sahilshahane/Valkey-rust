@@ -82,7 +82,7 @@ pub async fn load_kvstore_inmemory(map: &Arc<HashMap>, pool: &DBPool) -> Result<
             let value_clone = value.clone();
             
             let handle = tokio::spawn(async move {
-                map_clone.insert(key_clone, value_clone).await;
+                map_clone.insert(key_clone, value_clone);
             });
             
             handles.push(handle);

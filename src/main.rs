@@ -15,7 +15,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 use tower_http::trace::TraceLayer;
 use std::env;
 use std::sync::Arc;
-use whirlwind::ShardMap;
+use dashmap::DashMap;
 
 use crate::config::{Config, get_default_config};
 use crate::db_connection::load_kvstore_inmemory;
@@ -31,7 +31,7 @@ mod config;
 
 
 pub type DBPool = sqlx::PgPool;
-pub type HashMap = ShardMap<String, String>;
+pub type HashMap = DashMap<String, String>;
 
 #[derive(Clone)]
 pub struct AppState{
