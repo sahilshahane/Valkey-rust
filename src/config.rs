@@ -17,6 +17,6 @@ pub fn get_default_config() -> Config {
     Config { 
         logs_dir: "./logs".to_string(), 
         port: 4000,
-        wal_pool_size: 10
+        wal_pool_size: 2
     }
 }
