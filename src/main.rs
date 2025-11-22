@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 use std::env;
 use std::sync::Arc;
 use whirlwind::ShardMap;
+use dashmap::DashMap;
 
 use crate::config::{Config, get_default_config};
 use crate::db_connection::load_kvstore_inmemory;
@@ -31,7 +32,8 @@ mod config;
 
 
 pub type DBPool = sqlx::PgPool;
-pub type HashMap = ShardMap<String, String>;
+// pub type HashMap = ShardMap<String, String>;
+pub type HashMap = DashMap<String, String>;
 
 #[derive(Clone)]
 pub struct AppState{
@@ -46,7 +48,8 @@ async fn health_check() -> impl IntoResponse {
 }
 
 
-#[tokio::main]
+// #[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     // Load .env file at the start of your application
     dotenvy::dotenv().ok();

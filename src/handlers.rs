@@ -9,7 +9,7 @@ pub async fn get_key(
     Path(key): Path<String>,
 ) -> Response {
 
-    if let Some(value) = state.cache.get(&key).await {
+    if let Some(value) = state.cache.get(&key) {
         // tracing::debug!("Cache HIT for key: {}", key);
         return (StatusCode::OK, value.value().clone()).into_response();
     }
@@ -45,11 +45,11 @@ pub async fn set_key(
     //     .execute(&(*state.pool))
     //     .await.unwrap();
 
-    if let Err(error) = state.wal.set(&key, &payload.value).await{
+    if let Err(error) = state.wal.set(&key, &payload.value){
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
     }
 
-    state.cache.insert(key, payload.value).await;
+    state.cache.insert(key, payload.value);
 
     return (StatusCode::OK).into_response();
 }
@@ -68,15 +68,15 @@ pub async fn delete_key(
     //     return (StatusCode::NOT_FOUND).into_response();
     // }
 
-    if !state.cache.contains_key(&key).await {
+    if !state.cache.contains_key(&key) {
         return (StatusCode::NOT_FOUND).into_response();
     }
 
-    if let Err(error) = state.wal.delete(&key).await{
+    if let Err(error) = state.wal.delete(&key){
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
     }
 
-    state.cache.remove(&key).await;
+    state.cache.remove(&key);
 
     return (StatusCode::OK).into_response();
 }

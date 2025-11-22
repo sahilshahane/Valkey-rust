@@ -274,7 +274,7 @@ impl WAL {
        return Ok(writer);
     }
 
-    pub async fn set(&self, key: &str, val: &str) -> io::Result<()>{
+    pub fn set(&self, key: &str, val: &str) -> io::Result<()>{
 
         let time_ns = SystemTime::now().duration_since(UNIX_EPOCH);
 
@@ -301,7 +301,7 @@ impl WAL {
         return Ok(())
     }
 
-    pub async fn delete(&self, key: &str) -> io::Result<()>{
+    pub fn delete(&self, key: &str) -> io::Result<()>{
         let time_ns = SystemTime::now().duration_since(UNIX_EPOCH);
 
         let key_bytes = key.as_bytes();
