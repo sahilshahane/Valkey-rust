@@ -38,7 +38,7 @@ impl WorkloadType {
 struct Stats {
     successful_requests: u64,
     failed_requests: u64,
-    total_latency_ms: u64,
+    total_latency_us: u64,
 }
 
 impl Stats {
@@ -46,21 +46,21 @@ impl Stats {
         Stats {
             successful_requests: 0,
             failed_requests: 0,
-            total_latency_ms: 0,
+            total_latency_us: 0,
         }
     }
 
     fn merge(&mut self, other: &Stats) {
         self.successful_requests += other.successful_requests;
         self.failed_requests += other.failed_requests;
-        self.total_latency_ms += other.total_latency_ms;
+        self.total_latency_us += other.total_latency_us;
     }
 
-    fn avg_latency_ms(&self) -> f64 {
+    fn avg_latency_us(&self) -> f64 {
         if self.successful_requests == 0 {
             0.0
         } else {
-            self.total_latency_ms as f64 / self.successful_requests as f64
+            self.total_latency_us as f64 / self.successful_requests as f64
         }
     }
 }
@@ -93,7 +93,7 @@ async fn run_worker_putall(
         match set_result {
             Ok(response) if response.status().is_success() => {
                 stats.successful_requests += 1;
-                stats.total_latency_ms += set_start.elapsed().as_millis() as u64;
+                stats.total_latency_us += set_start.elapsed().as_micros() as u64;
             }
             _ => stats.failed_requests += 1,
         }
@@ -108,7 +108,7 @@ async fn run_worker_putall(
         match delete_result {
             Ok(response) if response.status().is_success() => {
                 stats.successful_requests += 1;
-                stats.total_latency_ms += delete_start.elapsed().as_millis() as u64;
+                stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
             }
             _ => stats.failed_requests += 1,
         }
@@ -146,7 +146,7 @@ async fn run_worker_getall(
         match get_result {
             Ok(_) => {
                 stats.successful_requests += 1;
-                stats.total_latency_ms += get_start.elapsed().as_millis() as u64;
+                stats.total_latency_us += get_start.elapsed().as_micros() as u64;
             }
             _ => stats.failed_requests += 1,
         }
@@ -213,7 +213,7 @@ async fn run_worker_getpopular(
         match get_result {
             Ok(response) if response.status().is_success() => {
                 stats.successful_requests += 1;
-                stats.total_latency_ms += get_start.elapsed().as_millis() as u64;
+                stats.total_latency_us += get_start.elapsed().as_micros() as u64;
             }
             _ => stats.failed_requests += 1,
         }
@@ -258,7 +258,7 @@ async fn run_worker_getput(
             match get_result {
                 Ok(_) => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += get_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += get_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -277,7 +277,7 @@ async fn run_worker_getput(
             match set_result {
                 Ok(response) if response.status().is_success() => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += set_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += set_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -294,7 +294,7 @@ async fn run_worker_getput(
             match delete_result {
                 Ok(_) => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += delete_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -355,7 +355,7 @@ async fn run_worker_stress(
             match get_result {
                 Ok(response) if response.status().is_success() => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += get_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += get_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -374,7 +374,7 @@ async fn run_worker_stress(
             match set_result {
                 Ok(response) if response.status().is_success() => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += set_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += set_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -391,7 +391,7 @@ async fn run_worker_stress(
             match delete_result {
                 Ok(_) => {
                     stats.successful_requests += 1;
-                    stats.total_latency_ms += delete_start.elapsed().as_millis() as u64;
+                    stats.total_latency_us += delete_start.elapsed().as_micros() as u64;
                 }
                 _ => stats.failed_requests += 1,
             }
@@ -480,7 +480,7 @@ async fn run_load_test(
         "Throughput: {:.2} req/sec",
         (total_stats.successful_requests + total_stats.failed_requests) as f64 / elapsed
     );
-    println!("Average latency: {:.2}ms", total_stats.avg_latency_ms());
+    println!("Average latency: {:.2}µs", total_stats.avg_latency_us());
     println!(
         "Success rate: {:.2}%",
         (total_stats.successful_requests as f64
@@ -489,7 +489,7 @@ async fn run_load_test(
     );
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
