@@ -2,17 +2,28 @@
 
 # Script to run KVStore server and benchmark with CPU affinity
 
+
 # Configuration
-SERVER_CORES="8,9,10,11"
-BENCHMARK_CORES="0,1,2,3,4,5,6,7"
-N_CLIENTS=${N_CLIENTS:-30}
+SERVER_CORES="6,7,8,9,10,11"
+BENCHMARK_CORES="0,1,2,3,4,5"
 SERVER_URL=${SERVER_URL:-"http://localhost:4000"}
-RUNNING_TIME=${RUNNING_TIME:-10}
+RUNNING_TIME=${RUNNING_TIME:-600}
+
+
+# Build the server and load test
+echo "Building server, load test and profiler..."
+cargo build --release --bin kvstore > /dev/null 2>&1
+cargo build --release --bin load_test > /dev/null 2>&1
+cargo build --release --bin profiler > /dev/null 2>&1
+echo "Build complete!"
+echo ""
+
+# Array of N_CLIENTS to test
+# N_CLIENTS_ARR=(1 2 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100)
+N_CLIENTS_ARR=(1 5 20 50 100 150 200 300 400 500 800 1000)
 
 # Generate timestamp for output file
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILE="benchmark_logs/benchmark_${N_CLIENTS}-${TIMESTAMP}.txt"
-SERVER_LOG_FILE="benchmark_logs/server_logs/server_${TIMESTAMP}.log"
 
 # Create benchmark_logs directory if it doesn't exist
 mkdir -p benchmark_logs
@@ -23,20 +34,10 @@ echo "KVStore Benchmark Runner"
 echo "======================================"
 echo "Server cores: ${SERVER_CORES}"
 echo "Benchmark cores: ${BENCHMARK_CORES}"
-echo "Number of clients: ${N_CLIENTS}"
 echo "Running time: ${RUNNING_TIME} seconds"
-echo "Output file: ${OUTPUT_FILE}"
+echo "Client counts: ${N_CLIENTS_ARR[@]}"
 echo "======================================"
 echo ""
-
-# Build the server and load test
-echo "Building server, load test and profiler..."
-cargo build --release --bin kvstore > /dev/null 2>&1
-cargo build --release --bin load_test > /dev/null 2>&1
-cargo build --release --bin profiler > /dev/null 2>&1
-echo "Build complete!"
-echo ""
-
 
 set -e
 
@@ -53,13 +54,24 @@ trap "kill ${SUDO_KEEPER_PID} 2>/dev/null || true" EXIT
 
 
 # Run all workload types individually
-WORKLOADS=("putall" "getall" "getpopular" "getput")
+# WORKLOADS=("putall" "getall" "getpopular" "getput" "stress")
+WORKLOADS=("putall" "getall")
+
+# Loop through each N_CLIENTS value
+for N_CLIENTS in "${N_CLIENTS_ARR[@]}"; do
+    echo ""
+    echo "======================================"
+    echo "Testing with ${N_CLIENTS} clients"
+    echo "======================================"
+    echo ""
+    
+    SERVER_LOG_FILE="benchmark_logs/server_logs/server_${N_CLIENTS}_${TIMESTAMP}.log"
 
 for WORKLOAD in "${WORKLOADS[@]}"; do
 
     # Kill any existing kvstore processes
     echo "Cleaning up any existing kvstore processes..."
-    pkill -9 kvstore || true
+    pkill -9 kvstore 2>/dev/null  || true
     rm -rf logs
     sleep 2
 
@@ -100,7 +112,7 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
 
 
     OUTPUT_FILE="benchmark_logs/benchmark_${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.txt"
-    METRICS_FILE="benchmark_logs/metrics-${WORKLOAD}-${N_CLIENTS}-${TIMESTAMP}.json"
+    METRICS_FILE="benchmark_logs/metrics-${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.json"
     
     echo "======================================"
     echo "Running ${WORKLOAD} workload..."
@@ -108,7 +120,7 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
     
     # Start profiler in background
     echo "Starting profiler for PID ${SERVER_PID}..."
-    sudo ./target/release/profiler --pid ${SERVER_PID} --interval-ms 1000 --out ${METRICS_FILE} > /dev/null 2>&1 &
+    sudo taskset -c 5 ./target/release/profiler --pid ${SERVER_PID} --interval-ms 1000 --out ${METRICS_FILE} > /dev/null 2>&1 &
     PROFILER_PID=$!
     echo "Profiler started with PID: ${PROFILER_PID}"
     
@@ -134,6 +146,11 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
     echo "Stopping profiler (PID: ${PROFILER_PID})..."
     sudo kill ${PROFILER_PID} 2>/dev/null || true
     
+    # Stop server for this workload
+    echo "Stopping server (PID: ${SERVER_PID})..."
+    kill ${SERVER_PID} 2>/dev/null || true
+    sleep 1
+    
     echo ""
     echo "Results saved to: ${OUTPUT_FILE}"
     echo "Metrics saved to: ${METRICS_FILE}"
@@ -143,24 +160,20 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
     sleep 2
 done
 
+done  # End of N_CLIENTS loop
+
 # Cleanup
 echo ""
 echo "======================================"
 echo "All Benchmarks Complete!"
 echo "======================================"
-echo "Stopping server (PID: ${SERVER_PID})..."
-kill ${SERVER_PID} 2>/dev/null || true
-sleep 2
-pkill -9 kvstore || true
+echo "Ensuring all processes are stopped..."
+pkill -9 kvstore 2>/dev/null || true
+sleep 1
 
 echo ""
-echo "All benchmark results saved to benchmark_logs/"
-echo "Server logs saved to: ${SERVER_LOG_FILE}"
+echo "Summary of all tests:"
+echo "Client counts tested: ${N_CLIENTS_ARR[@]}"
+echo "Workloads tested: ${WORKLOADS[@]}"
+echo "All results saved in benchmark_logs/"
 echo ""
-echo "Summary:"
-for WORKLOAD in "${WORKLOADS[@]}"; do
-    echo "  Benchmark: benchmark_${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.txt"
-    echo "  Metrics:   metrics-${WORKLOAD}-${N_CLIENTS}-${TIMESTAMP}.json"
-done
-echo ""
-echo "Done!"
