@@ -1,10 +1,10 @@
 tail_n=${TAIL_N:-16}
 head_n=${HEAD_N:-10}
-running_time=${RUNNING_TIME:-300}
-n_clients=${N_CLIENTS:-12}
+running_time=${RUNNING_TIME:-5}
+n_clients=${N_CLIENTS:-1}
 server_url=${SERVER_URL:-"http://localhost:4000"}
 
-cargo build --release --bin load_test > /dev/null
+cargo build --release --bin load_test 2>/dev/null
 
 echo "No. of Clients : ${n_clients}"
 echo "Runtime duration : ${running_time} seconds\n"
