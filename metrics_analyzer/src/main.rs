@@ -43,6 +43,10 @@ struct SystemMetrics {
     max_major_faults: u64,
     avg_cpu_utilization: HashMap<String, f64>, // per CPU percentage (arithmetic mean)
     geomean_cpu_utilization: HashMap<String, f64>, // per CPU percentage (geometric mean)
+    avg_cpu_idle_time: HashMap<String, f64>, // per CPU idle time percentage
+    avg_cpu_user_time: HashMap<String, f64>, // per CPU user time percentage
+    avg_cpu_busy_time: HashMap<String, f64>, // per CPU busy time percentage (100 - idle)
+    avg_cpu_io_wait_time: HashMap<String, f64>, // per CPU io wait time percentage
     benchmark_results: BenchmarkResults,
 }
 
@@ -91,6 +95,59 @@ struct CsvRecord {
     cpu10_geomean_percent: f64,
     cpu11_percent: f64,
     cpu11_geomean_percent: f64,
+    // CPU time breakdowns
+    cpu0_idle_percent: f64,
+    cpu0_user_percent: f64,
+    cpu0_busy_percent: f64,
+    cpu0_io_wait_percent: f64,
+    cpu1_idle_percent: f64,
+    cpu1_user_percent: f64,
+    cpu1_busy_percent: f64,
+    cpu1_io_wait_percent: f64,
+    cpu2_idle_percent: f64,
+    cpu2_user_percent: f64,
+    cpu2_busy_percent: f64,
+    cpu2_io_wait_percent: f64,
+    cpu3_idle_percent: f64,
+    cpu3_user_percent: f64,
+    cpu3_busy_percent: f64,
+    cpu3_io_wait_percent: f64,
+    cpu4_idle_percent: f64,
+    cpu4_user_percent: f64,
+    cpu4_busy_percent: f64,
+    cpu4_io_wait_percent: f64,
+    cpu5_idle_percent: f64,
+    cpu5_user_percent: f64,
+    cpu5_busy_percent: f64,
+    cpu5_io_wait_percent: f64,
+    cpu6_idle_percent: f64,
+    cpu6_user_percent: f64,
+    cpu6_busy_percent: f64,
+    cpu6_io_wait_percent: f64,
+    cpu7_idle_percent: f64,
+    cpu7_user_percent: f64,
+    cpu7_busy_percent: f64,
+    cpu7_io_wait_percent: f64,
+    cpu8_idle_percent: f64,
+    cpu8_user_percent: f64,
+    cpu8_busy_percent: f64,
+    cpu8_io_wait_percent: f64,
+    cpu9_idle_percent: f64,
+    cpu9_user_percent: f64,
+    cpu9_busy_percent: f64,
+    cpu9_io_wait_percent: f64,
+    cpu10_idle_percent: f64,
+    cpu10_user_percent: f64,
+    cpu10_busy_percent: f64,
+    cpu10_io_wait_percent: f64,
+    cpu11_idle_percent: f64,
+    cpu11_user_percent: f64,
+    cpu11_busy_percent: f64,
+    cpu11_io_wait_percent: f64,
+    overall_cpu_idle_percent: f64,
+    overall_cpu_user_percent: f64,
+    overall_cpu_busy_percent: f64,
+    overall_cpu_io_wait_percent: f64,
 }
 
 fn parse_filename(filename: &str) -> (String, u32, String) {
@@ -178,6 +235,15 @@ fn parse_benchmark_txt(workload: &str, num_clients: u32, timestamp: &str, direct
     results
 }
 
+#[derive(Debug, Default)]
+struct CpuTimeBreakdown {
+    usage_percent: f64,
+    idle_percent: f64,
+    user_percent: f64,
+    busy_percent: f64,
+    io_wait_percent: f64,
+}
+
 fn calculate_cpu_diff_usage(prev_jiffies: &[u64], curr_jiffies: &[u64]) -> f64 {
     if prev_jiffies.len() < 4 || curr_jiffies.len() < 4 {
         return 0.0;
@@ -216,6 +282,60 @@ fn calculate_cpu_diff_usage(prev_jiffies: &[u64], curr_jiffies: &[u64]) -> f64 {
     
     let usage = 100.0 * (1.0 - (idle_delta as f64 / total_delta as f64));
     usage.max(0.0).min(100.0)
+}
+
+fn calculate_cpu_time_breakdown(prev_jiffies: &[u64], curr_jiffies: &[u64]) -> CpuTimeBreakdown {
+    if prev_jiffies.len() < 4 || curr_jiffies.len() < 4 {
+        return CpuTimeBreakdown::default();
+    }
+    
+    let prev_user = prev_jiffies[0];
+    let prev_nice = prev_jiffies[1];
+    let prev_system = prev_jiffies[2];
+    let prev_idle = prev_jiffies[3];
+    let prev_iowait = if prev_jiffies.len() > 4 { prev_jiffies[4] } else { 0 };
+    let prev_irq = if prev_jiffies.len() > 5 { prev_jiffies[5] } else { 0 };
+    let prev_softirq = if prev_jiffies.len() > 6 { prev_jiffies[6] } else { 0 };
+    let prev_steal = if prev_jiffies.len() > 7 { prev_jiffies[7] } else { 0 };
+    
+    let curr_user = curr_jiffies[0];
+    let curr_nice = curr_jiffies[1];
+    let curr_system = curr_jiffies[2];
+    let curr_idle = curr_jiffies[3];
+    let curr_iowait = if curr_jiffies.len() > 4 { curr_jiffies[4] } else { 0 };
+    let curr_irq = if curr_jiffies.len() > 5 { curr_jiffies[5] } else { 0 };
+    let curr_softirq = if curr_jiffies.len() > 6 { curr_jiffies[6] } else { 0 };
+    let curr_steal = if curr_jiffies.len() > 7 { curr_jiffies[7] } else { 0 };
+    
+    let prev_total = prev_user + prev_nice + prev_system + prev_idle + prev_iowait + prev_irq + prev_softirq + prev_steal;
+    let curr_total = curr_user + curr_nice + curr_system + curr_idle + curr_iowait + curr_irq + curr_softirq + curr_steal;
+    
+    let total_delta = curr_total.saturating_sub(prev_total) as f64;
+    
+    if total_delta == 0.0 {
+        return CpuTimeBreakdown::default();
+    }
+    
+    let user_delta = (curr_user + curr_nice).saturating_sub(prev_user + prev_nice) as f64;
+    let idle_delta = curr_idle.saturating_sub(prev_idle) as f64;
+    let iowait_delta = curr_iowait.saturating_sub(prev_iowait) as f64;
+    
+    let user_percent = (100.0 * user_delta / total_delta).max(0.0).min(100.0);
+    let idle_percent = (100.0 * idle_delta / total_delta).max(0.0).min(100.0);
+    let io_wait_percent = (100.0 * iowait_delta / total_delta).max(0.0).min(100.0);
+    
+    // Total idle time includes both idle and iowait
+    let total_idle_delta = (curr_idle + curr_iowait).saturating_sub(prev_idle + prev_iowait) as f64;
+    let usage_percent = (100.0 * (1.0 - total_idle_delta / total_delta)).max(0.0).min(100.0);
+    let busy_percent = usage_percent; // Busy is the same as usage (100 - total_idle)
+    
+    CpuTimeBreakdown {
+        usage_percent,
+        idle_percent,
+        user_percent,
+        busy_percent,
+        io_wait_percent,
+    }
 }
 
 fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Result<SystemMetrics, Box<dyn std::error::Error>> {
@@ -267,6 +387,10 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
     // Calculate average and geometric mean CPU usage from jiffies differences
     // For geometric mean, we'll accumulate log sum instead of product to avoid overflow
     let mut cpu_log_sum: HashMap<String, f64> = HashMap::new();
+    let mut cpu_idle_sum: HashMap<String, f64> = HashMap::new();
+    let mut cpu_user_sum: HashMap<String, f64> = HashMap::new();
+    let mut cpu_busy_sum: HashMap<String, f64> = HashMap::new();
+    let mut cpu_io_wait_sum: HashMap<String, f64> = HashMap::new();
     
     for i in 1..entries.len() {
         let prev_entry = &entries[i - 1];
@@ -275,9 +399,14 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
         for (cpu_name, curr_jiffies) in &curr_entry.per_cpu_jiffies {
             if let Some(prev_jiffies) = prev_entry.per_cpu_jiffies.get(cpu_name) {
                 let usage = calculate_cpu_diff_usage(prev_jiffies, curr_jiffies);
+                let breakdown = calculate_cpu_time_breakdown(prev_jiffies, curr_jiffies);
                 
                 // For arithmetic mean
                 *cpu_usage_sum.entry(cpu_name.clone()).or_insert(0.0) += usage;
+                *cpu_idle_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.idle_percent;
+                *cpu_user_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.user_percent;
+                *cpu_busy_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.busy_percent;
+                *cpu_io_wait_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.io_wait_percent;
                 
                 // For geometric mean: accumulate log(x) to avoid overflow
                 // geometric mean = exp(mean(log(x)))
@@ -308,6 +437,39 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
             let mean_log = log_sum / n;
             let geomean = mean_log.exp() - 0.01; // Subtract epsilon we added
             (cpu, geomean.max(0.0).min(100.0))
+        })
+        .collect();
+    
+    // Calculate average CPU time breakdowns
+    let avg_cpu_idle_time: HashMap<String, f64> = cpu_idle_sum
+        .into_iter()
+        .map(|(cpu, sum)| {
+            let count = cpu_sample_count.get(&cpu).unwrap_or(&1);
+            (cpu, sum / *count as f64)
+        })
+        .collect();
+    
+    let avg_cpu_user_time: HashMap<String, f64> = cpu_user_sum
+        .into_iter()
+        .map(|(cpu, sum)| {
+            let count = cpu_sample_count.get(&cpu).unwrap_or(&1);
+            (cpu, sum / *count as f64)
+        })
+        .collect();
+    
+    let avg_cpu_busy_time: HashMap<String, f64> = cpu_busy_sum
+        .into_iter()
+        .map(|(cpu, sum)| {
+            let count = cpu_sample_count.get(&cpu).unwrap_or(&1);
+            (cpu, sum / *count as f64)
+        })
+        .collect();
+    
+    let avg_cpu_io_wait_time: HashMap<String, f64> = cpu_io_wait_sum
+        .into_iter()
+        .map(|(cpu, sum)| {
+            let count = cpu_sample_count.get(&cpu).unwrap_or(&1);
+            (cpu, sum / *count as f64)
         })
         .collect();
     
@@ -346,6 +508,10 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
         max_major_faults,
         avg_cpu_utilization,
         geomean_cpu_utilization,
+        avg_cpu_idle_time,
+        avg_cpu_user_time,
+        avg_cpu_busy_time,
+        avg_cpu_io_wait_time,
         benchmark_results,
     })
 }
@@ -493,6 +659,59 @@ fn write_csv(metrics_list: &[SystemMetrics], output_path: &str) -> Result<(), Bo
             cpu10_geomean_percent: *metrics.geomean_cpu_utilization.get("cpu10").unwrap_or(&0.0),
             cpu11_percent: *metrics.avg_cpu_utilization.get("cpu11").unwrap_or(&0.0),
             cpu11_geomean_percent: *metrics.geomean_cpu_utilization.get("cpu11").unwrap_or(&0.0),
+            // CPU time breakdowns
+            cpu0_idle_percent: *metrics.avg_cpu_idle_time.get("cpu0").unwrap_or(&0.0),
+            cpu0_user_percent: *metrics.avg_cpu_user_time.get("cpu0").unwrap_or(&0.0),
+            cpu0_busy_percent: *metrics.avg_cpu_busy_time.get("cpu0").unwrap_or(&0.0),
+            cpu0_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu0").unwrap_or(&0.0),
+            cpu1_idle_percent: *metrics.avg_cpu_idle_time.get("cpu1").unwrap_or(&0.0),
+            cpu1_user_percent: *metrics.avg_cpu_user_time.get("cpu1").unwrap_or(&0.0),
+            cpu1_busy_percent: *metrics.avg_cpu_busy_time.get("cpu1").unwrap_or(&0.0),
+            cpu1_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu1").unwrap_or(&0.0),
+            cpu2_idle_percent: *metrics.avg_cpu_idle_time.get("cpu2").unwrap_or(&0.0),
+            cpu2_user_percent: *metrics.avg_cpu_user_time.get("cpu2").unwrap_or(&0.0),
+            cpu2_busy_percent: *metrics.avg_cpu_busy_time.get("cpu2").unwrap_or(&0.0),
+            cpu2_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu2").unwrap_or(&0.0),
+            cpu3_idle_percent: *metrics.avg_cpu_idle_time.get("cpu3").unwrap_or(&0.0),
+            cpu3_user_percent: *metrics.avg_cpu_user_time.get("cpu3").unwrap_or(&0.0),
+            cpu3_busy_percent: *metrics.avg_cpu_busy_time.get("cpu3").unwrap_or(&0.0),
+            cpu3_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu3").unwrap_or(&0.0),
+            cpu4_idle_percent: *metrics.avg_cpu_idle_time.get("cpu4").unwrap_or(&0.0),
+            cpu4_user_percent: *metrics.avg_cpu_user_time.get("cpu4").unwrap_or(&0.0),
+            cpu4_busy_percent: *metrics.avg_cpu_busy_time.get("cpu4").unwrap_or(&0.0),
+            cpu4_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu4").unwrap_or(&0.0),
+            cpu5_idle_percent: *metrics.avg_cpu_idle_time.get("cpu5").unwrap_or(&0.0),
+            cpu5_user_percent: *metrics.avg_cpu_user_time.get("cpu5").unwrap_or(&0.0),
+            cpu5_busy_percent: *metrics.avg_cpu_busy_time.get("cpu5").unwrap_or(&0.0),
+            cpu5_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu5").unwrap_or(&0.0),
+            cpu6_idle_percent: *metrics.avg_cpu_idle_time.get("cpu6").unwrap_or(&0.0),
+            cpu6_user_percent: *metrics.avg_cpu_user_time.get("cpu6").unwrap_or(&0.0),
+            cpu6_busy_percent: *metrics.avg_cpu_busy_time.get("cpu6").unwrap_or(&0.0),
+            cpu6_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu6").unwrap_or(&0.0),
+            cpu7_idle_percent: *metrics.avg_cpu_idle_time.get("cpu7").unwrap_or(&0.0),
+            cpu7_user_percent: *metrics.avg_cpu_user_time.get("cpu7").unwrap_or(&0.0),
+            cpu7_busy_percent: *metrics.avg_cpu_busy_time.get("cpu7").unwrap_or(&0.0),
+            cpu7_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu7").unwrap_or(&0.0),
+            cpu8_idle_percent: *metrics.avg_cpu_idle_time.get("cpu8").unwrap_or(&0.0),
+            cpu8_user_percent: *metrics.avg_cpu_user_time.get("cpu8").unwrap_or(&0.0),
+            cpu8_busy_percent: *metrics.avg_cpu_busy_time.get("cpu8").unwrap_or(&0.0),
+            cpu8_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu8").unwrap_or(&0.0),
+            cpu9_idle_percent: *metrics.avg_cpu_idle_time.get("cpu9").unwrap_or(&0.0),
+            cpu9_user_percent: *metrics.avg_cpu_user_time.get("cpu9").unwrap_or(&0.0),
+            cpu9_busy_percent: *metrics.avg_cpu_busy_time.get("cpu9").unwrap_or(&0.0),
+            cpu9_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu9").unwrap_or(&0.0),
+            cpu10_idle_percent: *metrics.avg_cpu_idle_time.get("cpu10").unwrap_or(&0.0),
+            cpu10_user_percent: *metrics.avg_cpu_user_time.get("cpu10").unwrap_or(&0.0),
+            cpu10_busy_percent: *metrics.avg_cpu_busy_time.get("cpu10").unwrap_or(&0.0),
+            cpu10_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu10").unwrap_or(&0.0),
+            cpu11_idle_percent: *metrics.avg_cpu_idle_time.get("cpu11").unwrap_or(&0.0),
+            cpu11_user_percent: *metrics.avg_cpu_user_time.get("cpu11").unwrap_or(&0.0),
+            cpu11_busy_percent: *metrics.avg_cpu_busy_time.get("cpu11").unwrap_or(&0.0),
+            cpu11_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu11").unwrap_or(&0.0),
+            overall_cpu_idle_percent: *metrics.avg_cpu_idle_time.get("cpu").unwrap_or(&0.0),
+            overall_cpu_user_percent: *metrics.avg_cpu_user_time.get("cpu").unwrap_or(&0.0),
+            overall_cpu_busy_percent: *metrics.avg_cpu_busy_time.get("cpu").unwrap_or(&0.0),
+            overall_cpu_io_wait_percent: *metrics.avg_cpu_io_wait_time.get("cpu").unwrap_or(&0.0),
         };
         
         wtr.serialize(record)?;
