@@ -2,3 +2,4 @@
 db/kv_store.db
 wal*.log*
 .env
+metrics_analyzer/target

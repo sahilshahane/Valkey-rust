@@ -20,7 +20,7 @@ echo ""
 
 # Array of N_CLIENTS to test
 # N_CLIENTS_ARR=(1 2 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100)
-N_CLIENTS_ARR=(1 5 20 50 100 150 200 300 400 500 800 1000)
+N_CLIENTS_ARR=(800 1000)
 
 # Generate timestamp for output file
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
