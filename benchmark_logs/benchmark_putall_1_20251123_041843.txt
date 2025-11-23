@@ -1,0 +1,22 @@
+======================================
+Benchmark Configuration
+======================================
+Workload: putall
+Server cores: 6,7,8,9,10,11
+Benchmark cores: 0,1,2,3,4,5
+Number of clients: 1
+Running time: 600 seconds
+Server URL: http://localhost:4000
+Timestamp: 20251123_041843
+======================================
+
+=== Load Test Results ===
+Workload: PUT-ALL: Create/Delete only (disk-bound)
+Duration: 600.01s
+Successful requests: 28055188
+Failed requests: 0
+Total requests: 28055188
+Throughput: 46757.68 req/sec
+Average latency: 20.56µs
+Success rate: 100.00%
+

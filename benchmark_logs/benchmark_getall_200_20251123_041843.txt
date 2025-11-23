@@ -1,0 +1,22 @@
+======================================
+Benchmark Configuration
+======================================
+Workload: getall
+Server cores: 6,7,8,9,10,11
+Benchmark cores: 0,1,2,3,4,5
+Number of clients: 200
+Running time: 600 seconds
+Server URL: http://localhost:4000
+Timestamp: 20251123_041843
+======================================
+
+=== Load Test Results ===
+Workload: GET-ALL: Read unique keys (disk-bound)
+Duration: 600.48s
+Successful requests: 182528311
+Failed requests: 0
+Total requests: 182528311
+Throughput: 303969.44 req/sec
+Average latency: 656.30µs
+Success rate: 100.00%
+

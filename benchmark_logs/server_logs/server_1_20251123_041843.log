@@ -1,0 +1,14 @@
+[2m2025-11-22T22:58:58.211083Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m ✅ Using jemalloc allocator for better performance
+[2m2025-11-22T22:58:59.664957Z[0m [32m INFO[0m [2msqlx::postgres::notice[0m[2m:[0m relation "_sqlx_migrations" already exists, skipping
+[2m2025-11-22T22:59:00.195685Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m Database migrations completed successfully
+[2m2025-11-22T22:59:00.195976Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m Flushing write-ahead-logs to kv_store table
+[2m2025-11-22T22:59:01.497021Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m Successfully flushed write-ahead-logs to kv_store table
+[2m2025-11-22T22:59:01.497259Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m syncing write-ahead-log
+[2m2025-11-22T22:59:01.497263Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m syncing of write-ahead-log with database completed
+[2m2025-11-22T22:59:01.497265Z[0m [32m INFO[0m [2mkvstore::db_connection[0m[2m:[0m Loading key-value data to memory
+[2m2025-11-22T22:59:01.713974Z[0m [32m INFO[0m [2mkvstore::db_connection[0m[2m:[0m Data fetched from the database
+[2m2025-11-22T22:59:01.713990Z[0m [32m INFO[0m [2mkvstore::db_connection[0m[2m:[0m Inserting data to in-memory data structure
+[2m2025-11-22T22:59:01.713992Z[0m [32m INFO[0m [2mkvstore::db_connection[0m[2m:[0m In-memory data loading completed
+[2m2025-11-22T22:59:01.713995Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m Started background WAL writer task
+[2m2025-11-22T22:59:01.714049Z[0m [32m INFO[0m [2mkvstore[0m[2m:[0m Server listening on 0.0.0.0:4000
+[2m2025-11-22T22:59:01.714125Z[0m [32m INFO[0m [2mkvstore::wal_manager[0m[2m:[0m WAL background writer started

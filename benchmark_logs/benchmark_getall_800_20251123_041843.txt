@@ -1,0 +1,12 @@
+======================================
+Benchmark Configuration
+======================================
+Workload: getall
+Server cores: 6,7,8,9,10,11
+Benchmark cores: 0,1,2,3,4,5
+Number of clients: 800
+Running time: 600 seconds
+Server URL: http://localhost:4000
+Timestamp: 20251123_041843
+======================================
+
