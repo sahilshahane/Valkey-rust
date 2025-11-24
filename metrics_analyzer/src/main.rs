@@ -31,6 +31,10 @@ struct BenchmarkResults {
     throughput_req_per_sec: f64,
     average_latency_us: f64,
     success_rate_percent: f64,
+    server_core_count: f64,
+    benchmark_core_count: f64,
+    server_cores: Vec<u32>,
+    benchmark_cores: Vec<u32>,
 }
 
 #[derive(Debug)]
@@ -41,12 +45,17 @@ struct SystemMetrics {
     max_ram_used: f64,         // MB
     max_minor_faults: u64,
     max_major_faults: u64,
+    max_voluntary_ctx_switches: u64,
+    max_nonvoluntary_ctx_switches: u64,
+    max_ctxt_total: u64,
     avg_cpu_utilization: HashMap<String, f64>, // per CPU percentage (arithmetic mean)
     geomean_cpu_utilization: HashMap<String, f64>, // per CPU percentage (geometric mean)
     avg_cpu_idle_time: HashMap<String, f64>, // per CPU idle time percentage
     avg_cpu_user_time: HashMap<String, f64>, // per CPU user time percentage
     avg_cpu_busy_time: HashMap<String, f64>, // per CPU busy time percentage (100 - idle)
     avg_cpu_io_wait_time: HashMap<String, f64>, // per CPU io wait time percentage
+    overall_server_cpu_percent: f64,
+    overall_benchmark_cpu_percent: f64,
     benchmark_results: BenchmarkResults,
 }
 
@@ -63,14 +72,21 @@ struct CsvRecord {
     throughput_req_per_sec: f64,
     average_latency_us: f64,
     success_rate_percent: f64,
+    server_core_count: f64,
+    benchmark_core_count: f64,
     io_read_speed_bytes_per_sec: f64,
     io_write_speed_bytes_per_sec: f64,
     max_ram_mb: f64,
     max_ram_gb: f64,
     max_minor_faults: u64,
     max_major_faults: u64,
+    max_voluntary_ctx_switches: u64,
+    max_nonvoluntary_ctx_switches: u64,
+    max_ctxt_total: u64,
     overall_cpu_percent: f64,
     overall_cpu_geomean_percent: f64,
+    overall_server_cpu_percent: f64,
+    overall_benchmark_cpu_percent: f64,
     cpu0_percent: f64,
     cpu0_geomean_percent: f64,
     cpu1_percent: f64,
@@ -172,6 +188,23 @@ fn parse_filename(filename: &str) -> (String, u32, String) {
     ("unknown".to_string(), 0, "unknown".to_string())
 }
 
+fn count_cores(cores_str: &str) -> f64 {
+    // Parse core list like "9,10,11" or "0,1,2,3,4,5,6,7,8,9"
+    let count = cores_str
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .count();
+    count as f64 / 2.0
+}
+
+fn parse_cores(cores_str: &str) -> Vec<u32> {
+    // Parse core list like "9,10,11" or "0,1,2,3,4,5,6,7,8,9"
+    cores_str
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u32>().ok())
+        .collect()
+}
+
 fn parse_benchmark_txt(workload: &str, num_clients: u32, timestamp: &str, directory: &str) -> BenchmarkResults {
     // Construct the benchmark .txt filename from metrics .json filename
     let txt_filename = format!("benchmark_{}_{}_{}.txt", workload, num_clients, timestamp);
@@ -183,8 +216,24 @@ fn parse_benchmark_txt(workload: &str, num_clients: u32, timestamp: &str, direct
         for line in content.lines() {
             let line = line.trim();
             
+            // Server cores: 10,11
+            if line.starts_with("Server cores:") {
+                if let Some(value) = line.split(':').nth(1) {
+                    let cores_str = value.trim();
+                    results.server_core_count = count_cores(cores_str);
+                    results.server_cores = parse_cores(cores_str);
+                }
+            }
+            // Benchmark cores: 0,1,2,3,4,5,6,7,8,9
+            else if line.starts_with("Benchmark cores:") {
+                if let Some(value) = line.split(':').nth(1) {
+                    let cores_str = value.trim();
+                    results.benchmark_core_count = count_cores(cores_str);
+                    results.benchmark_cores = parse_cores(cores_str);
+                }
+            }
             // Duration: 600.01s
-            if line.starts_with("Duration:") {
+            else if line.starts_with("Duration:") {
                 if let Some(value) = line.split(':').nth(1) {
                     let value = value.trim().trim_end_matches('s');
                     results.duration_sec = value.parse().unwrap_or(0.0);
@@ -365,10 +414,13 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
     let mut max_ram = 0.0f64;
     let mut max_minor_faults = 0u64;
     let mut max_major_faults = 0u64;
+    let mut max_voluntary_ctx_switches = 0u64;
+    let mut max_nonvoluntary_ctx_switches = 0u64;
+    let mut max_ctxt_total = 0u64;
     let mut cpu_usage_sum: HashMap<String, f64> = HashMap::new();
     let mut cpu_sample_count: HashMap<String, u64> = HashMap::new();
     
-    // Find max RAM and faults
+    // Find max RAM, faults, and context switches
     for entry in &entries {
         let ram_mb = entry.rss_kb_total as f64 / 1024.0;
         if ram_mb > max_ram {
@@ -382,6 +434,18 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
         if entry.major_faults_total > max_major_faults {
             max_major_faults = entry.major_faults_total;
         }
+        
+        if entry.voluntary_ctx_switches_total > max_voluntary_ctx_switches {
+            max_voluntary_ctx_switches = entry.voluntary_ctx_switches_total;
+        }
+        
+        if entry.nonvoluntary_ctx_switches_total > max_nonvoluntary_ctx_switches {
+            max_nonvoluntary_ctx_switches = entry.nonvoluntary_ctx_switches_total;
+        }
+        
+        if entry.ctxt_total > max_ctxt_total {
+            max_ctxt_total = entry.ctxt_total;
+        }
     }
     
     // Calculate average and geometric mean CPU usage from jiffies differences
@@ -392,16 +456,23 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
     let mut cpu_busy_sum: HashMap<String, f64> = HashMap::new();
     let mut cpu_io_wait_sum: HashMap<String, f64> = HashMap::new();
     
+    // For overall server/benchmark CPU calculations (ignore first 3 entries)
+    let mut cpu_usage_sum_stable: HashMap<String, f64> = HashMap::new();
+    let mut cpu_sample_count_stable: HashMap<String, u64> = HashMap::new();
+    
     for i in 1..entries.len() {
         let prev_entry = &entries[i - 1];
         let curr_entry = &entries[i];
+        
+        // Skip first 3 entries for stable CPU calculations (used for server/benchmark overall)
+        let skip_for_stable = i <= 3;
         
         for (cpu_name, curr_jiffies) in &curr_entry.per_cpu_jiffies {
             if let Some(prev_jiffies) = prev_entry.per_cpu_jiffies.get(cpu_name) {
                 let usage = calculate_cpu_diff_usage(prev_jiffies, curr_jiffies);
                 let breakdown = calculate_cpu_time_breakdown(prev_jiffies, curr_jiffies);
                 
-                // For arithmetic mean
+                // For arithmetic mean (all entries)
                 *cpu_usage_sum.entry(cpu_name.clone()).or_insert(0.0) += usage;
                 *cpu_idle_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.idle_percent;
                 *cpu_user_sum.entry(cpu_name.clone()).or_insert(0.0) += breakdown.user_percent;
@@ -415,6 +486,12 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
                 *cpu_log_sum.entry(cpu_name.clone()).or_insert(0.0) += log_value;
                 
                 *cpu_sample_count.entry(cpu_name.clone()).or_insert(0) += 1;
+                
+                // For stable calculations (skip first 3 entries)
+                if !skip_for_stable {
+                    *cpu_usage_sum_stable.entry(cpu_name.clone()).or_insert(0.0) += usage;
+                    *cpu_sample_count_stable.entry(cpu_name.clone()).or_insert(0) += 1;
+                }
             }
         }
     }
@@ -499,6 +576,40 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
     let (workload, num_clients, timestamp) = parse_filename(file_name);
     let benchmark_results = parse_benchmark_txt(&workload, num_clients, &timestamp, directory);
     
+    // Calculate stable CPU utilization (excluding first 3 entries)
+    let avg_cpu_utilization_stable: HashMap<String, f64> = cpu_usage_sum_stable
+        .into_iter()
+        .map(|(cpu, sum)| {
+            let count = cpu_sample_count_stable.get(&cpu).unwrap_or(&1);
+            (cpu, sum / *count as f64)
+        })
+        .collect();
+    
+    // Calculate overall server and benchmark CPU percentages (using stable averages)
+    let overall_server_cpu_percent = if !benchmark_results.server_cores.is_empty() {
+        let sum: f64 = benchmark_results.server_cores.iter()
+            .map(|core| {
+                let cpu_name = format!("cpu{}", core);
+                *avg_cpu_utilization_stable.get(&cpu_name).unwrap_or(&0.0)
+            })
+            .sum();
+        sum / benchmark_results.server_cores.len() as f64
+    } else {
+        0.0
+    };
+    
+    let overall_benchmark_cpu_percent = if !benchmark_results.benchmark_cores.is_empty() {
+        let sum: f64 = benchmark_results.benchmark_cores.iter()
+            .map(|core| {
+                let cpu_name = format!("cpu{}", core);
+                *avg_cpu_utilization_stable.get(&cpu_name).unwrap_or(&0.0)
+            })
+            .sum();
+        sum / benchmark_results.benchmark_cores.len() as f64
+    } else {
+        0.0
+    };
+    
     Ok(SystemMetrics {
         file_name: file_name.to_string(),
         total_io_read_speed,
@@ -506,12 +617,17 @@ fn analyze_metrics_file(file_path: &str, file_name: &str, directory: &str) -> Re
         max_ram_used: max_ram,
         max_minor_faults,
         max_major_faults,
+        max_voluntary_ctx_switches,
+        max_nonvoluntary_ctx_switches,
+        max_ctxt_total,
         avg_cpu_utilization,
         geomean_cpu_utilization,
         avg_cpu_idle_time,
         avg_cpu_user_time,
         avg_cpu_busy_time,
         avg_cpu_io_wait_time,
+        overall_server_cpu_percent,
+        overall_benchmark_cpu_percent,
         benchmark_results,
     })
 }
@@ -599,6 +715,17 @@ fn analyze_all_metrics(directory: &str, output_csv: Option<&str>) -> Result<(), 
         }
     }
     
+    // Sort metrics by workload and num_clients (ascending)
+    all_metrics.sort_by(|a, b| {
+        let (workload_a, num_clients_a, _) = parse_filename(&a.file_name);
+        let (workload_b, num_clients_b, _) = parse_filename(&b.file_name);
+        
+        // First sort by workload, then by num_clients, then by server_core_count
+        workload_a.cmp(&workload_b)
+            .then(num_clients_a.cmp(&num_clients_b))
+            .then(a.benchmark_results.server_core_count.partial_cmp(&b.benchmark_results.server_core_count).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    
     // Write to CSV if requested
     if let Some(csv_path) = output_csv {
         write_csv(&all_metrics, csv_path)?;
@@ -627,14 +754,21 @@ fn write_csv(metrics_list: &[SystemMetrics], output_path: &str) -> Result<(), Bo
             throughput_req_per_sec: metrics.benchmark_results.throughput_req_per_sec,
             average_latency_us: metrics.benchmark_results.average_latency_us,
             success_rate_percent: metrics.benchmark_results.success_rate_percent,
+            server_core_count: metrics.benchmark_results.server_core_count,
+            benchmark_core_count: metrics.benchmark_results.benchmark_core_count,
             io_read_speed_bytes_per_sec: metrics.total_io_read_speed,
             io_write_speed_bytes_per_sec: metrics.total_io_write_speed,
             max_ram_mb: metrics.max_ram_used,
             max_ram_gb: metrics.max_ram_used / 1024.0,
             max_minor_faults: metrics.max_minor_faults,
             max_major_faults: metrics.max_major_faults,
+            max_voluntary_ctx_switches: metrics.max_voluntary_ctx_switches,
+            max_nonvoluntary_ctx_switches: metrics.max_nonvoluntary_ctx_switches,
+            max_ctxt_total: metrics.max_ctxt_total,
             overall_cpu_percent: *metrics.avg_cpu_utilization.get("cpu").unwrap_or(&0.0),
             overall_cpu_geomean_percent: *metrics.geomean_cpu_utilization.get("cpu").unwrap_or(&0.0),
+            overall_server_cpu_percent: metrics.overall_server_cpu_percent,
+            overall_benchmark_cpu_percent: metrics.overall_benchmark_cpu_percent,
             cpu0_percent: *metrics.avg_cpu_utilization.get("cpu0").unwrap_or(&0.0),
             cpu0_geomean_percent: *metrics.geomean_cpu_utilization.get("cpu0").unwrap_or(&0.0),
             cpu1_percent: *metrics.avg_cpu_utilization.get("cpu1").unwrap_or(&0.0),
