@@ -25,7 +25,7 @@ Flags:
 */
 
 use clap::Parser;
-use serde::Serialize;
+use sonic_rs::{Deserialize, Serialize}; 
 use std::collections::HashMap;
 use std::fs::{read_to_string, File};
 use std::io::{BufRead, BufReader, Write};
@@ -315,7 +315,7 @@ fn main() {
             ctxt_total: ctxt_total,
         };
 
-        let jl = serde_json::to_string(&sample).expect("serialize");
+        let jl = sonic_rs::to_string(&sample).expect("serialize");
         writeln!(writer, "{}", jl).expect("write out");
         writer.flush().ok();
 
