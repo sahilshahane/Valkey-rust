@@ -1,17 +1,27 @@
+![Check image in assets folder](/assets/github-header-banner.png "Banner img")
 
+
+[![License](https://img.shields.io/github/license/sahilshahane/Valkey-rust?style=flat-square)](https://github.com/sahilshahane/Valkey-rust/blob/main/LICENSE)
+[![Code Size](https://img.shields.io/github/languages/code-size/sahilshahane/Valkey-rust?style=flat-square)](https://github.com/sahilshahane/Valkey-rust)
+
+
+
+
+### A High-Performance Key-Value Data Store written in rust
 
 ### Running the server
 ```cli
 cargo build --release --bin kvstore
 ```
-## Architecture
-
-![Check image in assets folder](/assets/architecture.svg "Architecture")
-
 
 ## Other Tools
 - [Profiler](/profiler "Profiler") - to record system resource usage
 - [Metric Analyzer](/metrics_analyzer/ "Metric Analyzer") - Generates a csv from the analysis generated from profiler
+
+## Architecture
+
+![Check image in assets folder](/assets/architecture.svg "Architecture")
+
 
 
 ## Benchmarks
@@ -68,12 +78,7 @@ Storage : (512gb NVMe) WDC PC SN530 SDBPNPZ-512G-1114
 | Average latency | 0.00ms |
 | Success rate | 100.00% |
 
-#### STRESS: Maximum throughput test (no delays)
-| Metric | Value |
-|--------|-------|
-| Duration | 30.24s |
-| Successful requests | 7,594,777 |
-| Failed requests | 0 |
-| Throughput | 251,152.72 req/sec |
-| Average latency | 0.00ms |
-| Success rate | 100.00% |
+### To Run benchmark 
+```
+./benchmark/run_benchmark.sh
+```
