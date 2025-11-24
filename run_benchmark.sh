@@ -4,23 +4,29 @@
 
 
 # Configuration
-SERVER_CORES="6,7,8,9,10,11"
-BENCHMARK_CORES="0,1,2,3,4,5"
+BENCHMARK_CORES="0,1,2,3,4,5,6,7,8,9"
+SERVER_CORES="10,11"
 SERVER_URL=${SERVER_URL:-"http://localhost:4000"}
-RUNNING_TIME=${RUNNING_TIME:-600}
+RUNNING_TIME=${RUNNING_TIME:-10}
 
 
 # Build the server and load test
 echo "Building server, load test and profiler..."
 cargo build --release --bin kvstore > /dev/null 2>&1
 cargo build --release --bin load_test > /dev/null 2>&1
-cargo build --release --bin profiler > /dev/null 2>&1
+cd profiler && (cargo build --release --bin profiler > /dev/null 2>&1) && cd ..
 echo "Build complete!"
 echo ""
 
 # Array of N_CLIENTS to test
 # N_CLIENTS_ARR=(1 2 5 7 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100)
-N_CLIENTS_ARR=(800 1000)
+# 1 10 -> 100
+N_CLIENTS_ARR=(40)
+
+# Run all workload types individually
+# WORKLOADS=("putall" "getall" "getpopular" "getput" "stress")
+WORKLOADS=("putall" "getall" "getpopular" "getput")
+
 
 # Generate timestamp for output file
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -52,10 +58,6 @@ SUDO_KEEPER_PID=$!
 # Ensure sudo keeper is killed on exit
 trap "kill ${SUDO_KEEPER_PID} 2>/dev/null || true" EXIT
 
-
-# Run all workload types individually
-# WORKLOADS=("putall" "getall" "getpopular" "getput" "stress")
-WORKLOADS=("putall" "getall")
 
 # Loop through each N_CLIENTS value
 for N_CLIENTS in "${N_CLIENTS_ARR[@]}"; do
