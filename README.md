@@ -4,6 +4,15 @@
 ```cli
 cargo build --release --bin kvstore
 ```
+## Architecture
+
+![Check image in assets folder](/assets/architecture.svg "Architecture")
+
+
+## Other Tools
+- [Profiler](/profiler "Profiler") - to record system resource usage
+- [Metric Analyzer](/metrics_analyzer/ "Metric Analyzer") - Generates a csv from the analysis generated from profiler
+
 
 ## Benchmarks
 
