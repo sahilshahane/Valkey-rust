@@ -122,7 +122,7 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
     
     # Start profiler in background
     echo "Starting profiler for PID ${SERVER_PID}..."
-    sudo taskset -c 5 ./target/release/profiler --pid ${SERVER_PID} --interval-ms 1000 --out ${METRICS_FILE} > /dev/null 2>&1 &
+    sudo taskset -c 5 ./profiler/target/release/profiler --pid ${SERVER_PID} --interval-ms 1000 --out ${METRICS_FILE} > /dev/null 2>&1 &
     PROFILER_PID=$!
     echo "Profiler started with PID: ${PROFILER_PID}"
     
