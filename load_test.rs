@@ -8,7 +8,6 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
-use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 enum WorkloadType {
@@ -208,10 +207,12 @@ async fn run_worker_getpopular(
     // Wait a bit for worker 0 to populate
     tokio::time::sleep(Duration::from_millis(100)).await;
 
+    let mut idx = 0;
+    let key_len = popular_keys.len();
     while start.elapsed() < duration {
-        // Randomly select from popular keys
-        let idx = rand::rng().random_range(0..popular_keys.len());
-        let key = popular_keys[idx];
+        // Sequentially cycle through popular keys
+        let key = popular_keys[idx % key_len];
+        idx += 1;
 
         let get_start = Instant::now();
         let get_result = client
@@ -347,13 +348,14 @@ async fn run_worker_stress(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut counter = 0u64;
+    let mut hot_key_idx = 0usize;
     while start.elapsed() < duration {
         let op = rand::random::<u32>() % 100;
 
         if op < 60 {
             // 60% GET requests on hot keys (fast, cache hits)
-            let idx = rand::rng().random_range(0..hot_keys.len());
-            let key = &hot_keys[idx];
+            let key = &hot_keys[hot_key_idx % hot_keys.len()];
+            hot_key_idx += 1;
             
             let get_start = Instant::now();
             let get_result = client
