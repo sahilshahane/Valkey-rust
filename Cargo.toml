@@ -13,7 +13,6 @@ panic = "abort"
 [profile.release-debug]
 inherits = "release"
 debug = true
-#rustflags = ["-C", "target-cpu=native", "--cfg", "tokio_unstable"]
 
 [[bin]]
 name = "kvstore"
@@ -21,11 +20,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "load_test"
-path = "load_test.rs"
-
-[[bin]]
-name = "profiler"
-path = "profiler.rs"
+path = "benchmark/load_test.rs"
 
 
 [dependencies]
