@@ -6,6 +6,7 @@ edition = "2024"
 [profile.release]
 debug = false
 lto = "fat"
+codegen-units = 1
 strip = "debuginfo"
 opt-level = 3
 panic = "abort"

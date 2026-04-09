@@ -1,0 +1,18 @@
+======================================
+BOLT Benchmark Configuration
+======================================
+Workload: getall
+BOLT Binary: kvstore_perf_getall_40_20260409_200938.bolt
+Running time: 30 seconds
+======================================
+
+=== Load Test Results ===
+Workload: GET-ALL: Read unique keys (disk-bound)
+Duration: 30.10s
+Successful requests: 7835898
+Failed requests: 0
+Total requests: 7835898
+Throughput: 260367.51 req/sec
+Average latency: 152.08µs
+Success rate: 100.00%
+

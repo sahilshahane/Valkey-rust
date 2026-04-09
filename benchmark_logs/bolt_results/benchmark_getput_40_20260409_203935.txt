@@ -1,0 +1,18 @@
+======================================
+BOLT Benchmark Configuration
+======================================
+Workload: getput
+BOLT Binary: kvstore_perf_getput_40_20260409_200938.bolt
+Running time: 30 seconds
+======================================
+
+=== Load Test Results ===
+Workload: GET+PUT: Mixed workload
+Duration: 30.10s
+Successful requests: 7592947
+Failed requests: 0
+Total requests: 7592947
+Throughput: 252277.30 req/sec
+Average latency: 157.07µs
+Success rate: 100.00%
+

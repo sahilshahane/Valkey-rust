@@ -1,0 +1,18 @@
+======================================
+BOLT Benchmark Configuration
+======================================
+Workload: putall
+BOLT Binary: kvstore_perf_putall_40_20260409_200938.bolt
+Running time: 30 seconds
+======================================
+
+=== Load Test Results ===
+Workload: PUT-ALL: Create/Delete only (disk-bound)
+Duration: 30.10s
+Successful requests: 7232944
+Failed requests: 0
+Total requests: 7232944
+Throughput: 240300.93 req/sec
+Average latency: 164.93µs
+Success rate: 100.00%
+

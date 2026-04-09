@@ -1,2 +1,43 @@
-[build]
-rustflags = ["-C", "target-cpu=native"]
+[target.'cfg(all())']
+# linker = "clang-22"
+rustflags = [
+  # "-C", "linker-plugin-lto",
+  "-C", "target-cpu=native",
+  # "-C", "symbol-mangling-version=v0",
+  # "-C", "link-arg=-fuse-ld=lld-22",
+  # "-C", "llvm-args=-inline-threshold=500",
+  # "-C", "llvm-args=-fp-contract=fast",
+
+  # # core
+  # "-C", "llvm-args=--polly",
+  # "-C", "llvm-args=--polly-reschedule",                    # optimize using ISL scheduler
+  # "-C", "llvm-args=--polly-postopts",                      # tiling after rescheduling
+  # "-C", "llvm-args=--polly-run-dce",                       # dead code elimination
+
+  # # loop optimizations
+  # "-C", "llvm-args=--polly-tiling",                        # loop tiling for cache
+  # "-C", "llvm-args=--polly-2nd-level-tiling",              # L2 cache tiling
+  # "-C", "llvm-args=--polly-register-tiling",               # register level tiling
+  # "-C", "llvm-args=--polly-enable-simplify",               # simplify after opts
+
+  # # pattern matching optimizations
+  # "-C", "llvm-args=--polly-pattern-matching-based-opts",   # general pattern opts
+  # "-C", "llvm-args=--polly-matmul-opt",                    # matrix multiply opt
+  # "-C", "llvm-args=--polly-tc-opt",                        # tensor contraction opt
+
+  # # vectorization
+  # "-C", "llvm-args=--polly-vectorizer=stripmine",
+  # "-C", "llvm-args=--polly-annotate-metadata-vectorize",   # hint LLVM vectorizer
+
+  # # parallel
+  # "-C", "llvm-args=--polly-parallel",
+  # "-C", "llvm-args=--polly-parallel-force",
+
+  # # be more aggressive
+  # "-C", "llvm-args=--polly-process-unprofitable",          # try even unlikely scops
+  # "-C", "llvm-args=--polly-detect-full-functions",         # analyze full functions
+
+  # # reporting
+  # "-C", "llvm-args=--polly-report",                        # print what polly did
+  "-C", "link-arg=-Wl,-q"
+]

@@ -1,0 +1,18 @@
+======================================
+BOLT Benchmark Configuration
+======================================
+Workload: getpopular
+BOLT Binary: kvstore_perf_getpopular_40_20260409_200938.bolt
+Running time: 30 seconds
+======================================
+
+=== Load Test Results ===
+Workload: GET-POPULAR: Read hot keys (cache-bound)
+Duration: 30.09s
+Successful requests: 7709935
+Failed requests: 0
+Total requests: 7709935
+Throughput: 256221.99 req/sec
+Average latency: 154.14µs
+Success rate: 100.00%
+

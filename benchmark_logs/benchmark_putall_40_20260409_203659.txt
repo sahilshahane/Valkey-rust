@@ -1,0 +1,24 @@
+======================================
+Benchmark Configuration
+======================================
+Workload: putall
+Server cores: 10,11
+Benchmark cores: 0,1,2,3,4,5,6,7,8,9
+Number of clients: 40
+Running time: 30 seconds
+Server URL: http://localhost:4000
+Server Binary: ./target/release/kvstore
+Perf Recording: false
+Timestamp: 20260409_203659
+======================================
+
+=== Load Test Results ===
+Workload: PUT-ALL: Create/Delete only (disk-bound)
+Duration: 30.10s
+Successful requests: 6802972
+Failed requests: 0
+Total requests: 6802972
+Throughput: 226044.46 req/sec
+Average latency: 175.45µs
+Success rate: 100.00%
+

@@ -7,12 +7,16 @@
 BENCHMARK_CORES="0,1,2,3,4,5,6,7,8,9"
 SERVER_CORES="10,11"
 SERVER_URL=${SERVER_URL:-"http://localhost:4000"}
-RUNNING_TIME=${RUNNING_TIME:-10}
+RUNNING_TIME=${RUNNING_TIME:-30}
+ENABLE_PERF=${ENABLE_PERF:-false}
+KVSTORE_BINARY=${KVSTORE_BINARY:-"./target/release/kvstore"}
 
 
 # Build the server and load test
 echo "Building server, load test and profiler..."
-cargo build --release --bin kvstore > /dev/null 2>&1
+if [ "$KVSTORE_BINARY" = "./target/release/kvstore" ]; then
+    cargo build --release --bin kvstore > /dev/null 2>&1
+fi
 cargo build --release --bin load_test > /dev/null 2>&1
 cd profiler && (cargo build --release --bin profiler > /dev/null 2>&1) && cd ..
 echo "Build complete!"
@@ -73,13 +77,14 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
 
     # Kill any existing kvstore processes
     echo "Cleaning up any existing kvstore processes..."
-    pkill -9 kvstore 2>/dev/null  || true
+    BINARY_NAME=$(basename "${KVSTORE_BINARY}")
+    pkill -9 "${BINARY_NAME}" 2>/dev/null  || true
     rm -rf logs
     sleep 2
 
     # Start the server in background with CPU affinity
-    echo "Starting KVStore server on cores ${SERVER_CORES}..."
-    taskset -c ${SERVER_CORES} ./target/release/kvstore > ${SERVER_LOG_FILE} 2>&1 &
+    echo "Starting KVStore server from ${KVSTORE_BINARY} on cores ${SERVER_CORES}..."
+    taskset -c ${SERVER_CORES} ${KVSTORE_BINARY} > ${SERVER_LOG_FILE} 2>&1 &
     SERVER_PID=$!
     echo "Server started with PID: ${SERVER_PID}"
 
@@ -115,6 +120,7 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
 
     OUTPUT_FILE="benchmark_logs/benchmark_${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.txt"
     METRICS_FILE="benchmark_logs/metrics-${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.json"
+    PERF_FILE="benchmark_logs/perf_${WORKLOAD}_${N_CLIENTS}_${TIMESTAMP}.data"
     
     echo "======================================"
     echo "Running ${WORKLOAD} workload..."
@@ -125,6 +131,16 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
     sudo taskset -c 5 ./profiler/target/release/profiler --pid ${SERVER_PID} --interval-ms 1000 --out ${METRICS_FILE} > /dev/null 2>&1 &
     PROFILER_PID=$!
     echo "Profiler started with PID: ${PROFILER_PID}"
+
+    # Start perf recording if enabled
+    if [ "$ENABLE_PERF" = "true" ]; then
+        echo "Scheduling perf record (will start after 5s) for PID ${SERVER_PID}..."
+        (sleep 5; sudo taskset -c ${BENCHMARK_CORES} perf record -e cycles:u -j any,u -o ${PERF_FILE} -p ${SERVER_PID} -- sleep ${RUNNING_TIME}) > /dev/null 2>&1 &
+        PERF_PID=$!
+        echo "Perf recorder scheduled with wrapper PID: ${PERF_PID}"
+    else
+        echo "Perf recording is disabled."
+    fi
     
     # Write configuration header and run benchmark
     {
@@ -137,6 +153,8 @@ for WORKLOAD in "${WORKLOADS[@]}"; do
         echo "Number of clients: ${N_CLIENTS}"
         echo "Running time: ${RUNNING_TIME} seconds"
         echo "Server URL: ${SERVER_URL}"
+        echo "Server Binary: ${KVSTORE_BINARY}"
+        echo "Perf Recording: ${ENABLE_PERF}"
         echo "Timestamp: ${TIMESTAMP}"
         echo "======================================"
         echo ""
@@ -170,7 +188,9 @@ echo "======================================"
 echo "All Benchmarks Complete!"
 echo "======================================"
 echo "Ensuring all processes are stopped..."
-pkill -9 kvstore 2>/dev/null || true
+# Using the basename of KVSTORE_BINARY to kill processes
+BINARY_NAME=$(basename "${KVSTORE_BINARY}")
+pkill -9 "${BINARY_NAME}" 2>/dev/null || true
 sleep 1
 
 echo ""
